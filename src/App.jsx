@@ -157,9 +157,33 @@ ${sections}
 * journeyDetail은 학생이 실제로 어려워한 단계만 골라서 1~3개 작성해. 어려움 없이 잘한 단계는 넣지 마. difficulty는 "어디서 무엇을", help는 "어떤 도움을 줬고 어떻게 나아졌는지"가 드러나게 구체적으로 써.`;
 
   const raw = await callCuri(prompt);
-  const match = raw.match(/\{[\s\S]*\}/);
-  if(!match) throw new Error("리포트 생성 실패");
-  return JSON.parse(match[0]);
+  let match = raw.match(/\{[\s\S]*\}/);
+  if(!match){
+    // 중괄호 닫힘이 잘린 경우, 여는 괄호부터 끝까지 시도
+    const open = raw.indexOf("{");
+    if(open === -1) throw new Error("리포트 형식 오류");
+    match = [raw.slice(open)];
+  }
+  let jsonStr = match[0].trim();
+  try {
+    return JSON.parse(jsonStr);
+  } catch(e) {
+    // 흔한 문제 보정: 마지막 쉼표 제거, 잘린 문자열 닫기 시도
+    let fixed = jsonStr.replace(/,\s*([}\]])/g, "$1");
+    try { return JSON.parse(fixed); }
+    catch(e2) {
+      // 그래도 실패하면 최소한의 안전한 리포트 반환
+      return {
+        overallSummary: "탐구 과정을 끝까지 완성했어요. 자세한 분석 리포트를 불러오는 데 문제가 있었어요. 다시 시도해보세요.",
+        strengths: [],
+        journeyDetail: [],
+        improvements: [],
+        curiosityLevel: "-",
+        scientificThinkingNote: "",
+        suggestionForTeacher: ""
+      };
+    }
+  }
 }
 
 function Spinner({ color }) {
@@ -483,22 +507,21 @@ export default function App() {
   // ── 시작 화면 (학생 정보 입력) ──
   if (!started) {
     const canStart = student.grade && student.cls && student.num && student.name.trim();
-    const field = (label, key, placeholder, width) => (
-      <div style={{width}}>
+    const field = (label, key, width) => (
+      <div style={{width,boxSizing:"border-box"}}>
         <div style={{fontSize:12,fontWeight:700,color:C.inkSoft,marginBottom:6}}>{label}</div>
         <input
           value={student[key]}
           onChange={e=>setStudent(p=>({...p,[key]:e.target.value}))}
-          placeholder={placeholder}
           inputMode={key==="name"?"text":"numeric"}
-          style={{width:"100%",border:`1.5px solid ${C.line}`,borderRadius:11,padding:"11px 13px",fontSize:14,fontFamily:"inherit",outline:"none",color:C.ink}}
+          style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:11,padding:"11px 13px",fontSize:14,fontFamily:"inherit",outline:"none",color:C.ink}}
         />
       </div>
     );
     return (
-      <div style={{fontFamily:"'Pretendard',-apple-system,system-ui,sans-serif",background:`linear-gradient(160deg,${C.primary},${C.accent})`,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 22px",color:"white"}}>
+      <div style={{fontFamily:"'Pretendard',-apple-system,system-ui,sans-serif",background:`linear-gradient(160deg,${C.primary},${C.accent})`,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 22px",color:"white",boxSizing:"border-box"}}>
         <div style={{fontSize:52,marginBottom:14}}>🧪</div>
-        <div style={{fontSize:15,fontWeight:700,opacity:0.9,marginBottom:6}}>Songrye Science AI 큐리와 함께</div>
+        <div style={{fontSize:15,fontWeight:700,opacity:0.9,marginBottom:6,textAlign:"center"}}>Songrye Science AI 큐리와 함께</div>
         <div style={{fontSize:24,fontWeight:900,textAlign:"center",lineHeight:1.35,marginBottom:8}}>
           탐구보고서 작성하기
         </div>
@@ -506,15 +529,15 @@ export default function App() {
           나만의 탐구, 지금 시작해볼까?<br/>큐리랑 같이라면 할 수 있어! 💪✨
         </div>
 
-        <div style={{background:"white",borderRadius:20,padding:22,width:"100%",maxWidth:360,boxShadow:"0 10px 40px rgba(0,0,0,0.15)"}}>
+        <div style={{background:"white",borderRadius:20,padding:22,width:"100%",maxWidth:360,boxShadow:"0 10px 40px rgba(0,0,0,0.15)",boxSizing:"border-box"}}>
           <div style={{fontSize:14,fontWeight:800,color:C.ink,marginBottom:16,textAlign:"center"}}>내 정보를 입력해줘</div>
           <div style={{display:"flex",gap:10,marginBottom:12}}>
-            {field("학년","grade","1","33%")}
-            {field("반","cls","2","33%")}
-            {field("번호","num","15","34%")}
+            {field("학년","grade","33%")}
+            {field("반","cls","33%")}
+            {field("번호","num","34%")}
           </div>
           <div style={{marginBottom:20}}>
-            {field("이름","name","홍길동","100%")}
+            {field("이름","name","100%")}
           </div>
           <button
             onClick={()=>{ if(canStart) setStarted(true); }}

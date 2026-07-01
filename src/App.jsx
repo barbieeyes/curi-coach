@@ -63,14 +63,17 @@ const C = {
 };
 
 async function callCuri(prompt) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/curi", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:700, messages:[{role:"user",content:prompt}] })
+    body:JSON.stringify({ prompt })
   });
-  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  if(!res.ok) {
+    const errBody = await res.text().catch(()=>"");
+    throw new Error(`HTTP ${res.status} ${errBody.slice(0,100)}`);
+  }
   const data = await res.json();
-  return (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+  return data.text;
 }
 
 async function getFeedback(sec, text, attempt, prevInputs) {
@@ -221,6 +224,7 @@ export default function App() {
   const textareaRef = useRef(null);
 
   const [finalReport, setFinalReport] = useState(null);
+  const [showCelebrate, setShowCelebrate] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
 
   const MIN_FEEDBACK = 3;
@@ -250,7 +254,7 @@ export default function App() {
       toast_("다음 단계로 이동합니다");
       setTimeout(()=>go(idx+1),500);
     } else {
-      toast_("모든 단계 완료! 종합 리포트를 확인해보세요");
+      setShowCelebrate(true);
     }
   }
 
@@ -352,8 +356,8 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
           <div style={{width:34,height:34,borderRadius:11,background:`linear-gradient(135deg,${C.primary},${C.accent})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0,boxShadow:`0 2px 8px ${C.primary}35`}}>🧪</div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>식물·생태 탐구 보고서</div>
-            <div style={{fontSize:11,color:C.inkSoft,marginTop:1}}>큐리와 함께하는 5단계 탐구</div>
+            <div style={{fontSize:14,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Songrye Science AI 큐리</div>
+            <div style={{fontSize:11,color:C.inkSoft,marginTop:1}}>탐구보고서 작성하기</div>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={{fontSize:15,fontWeight:800,color:C.primary,lineHeight:1}}>{pct}%</div>
@@ -797,6 +801,76 @@ export default function App() {
         )}
       </div>
 
+      {/* ══════════ 완주 축하 화면 ══════════ */}
+      {showCelebrate && (
+        <div style={{
+          position:"fixed", inset:0, zIndex:300,
+          background:`linear-gradient(160deg, ${C.primary}, ${C.accent})`,
+          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+          padding:"32px 24px", overflow:"hidden", textAlign:"center"
+        }}>
+          {/* 콘페티 */}
+          {Array.from({length:32}).map((_,i)=>{
+            const colors=["#FFD166","#EF476F","#06D6A0","#FFFFFF","#FFB4A2","#B5E48C"];
+            const left = (i*37)%100;
+            const delay = (i%8)*0.25;
+            const size = 7 + (i%4)*3;
+            const dur = 2.4 + (i%5)*0.4;
+            return (
+              <div key={i} style={{
+                position:"absolute", top:"-20px", left:`${left}%`,
+                width:size, height:size*1.4,
+                background:colors[i%colors.length],
+                borderRadius:2,
+                opacity:0.9,
+                animation:`confetti ${dur}s ${delay}s linear infinite`
+              }}/>
+            );
+          })}
+
+          <div style={{fontSize:64, marginBottom:8, animation:"pop 0.6s ease"}}>🎉</div>
+          <div style={{fontSize:28, fontWeight:900, color:"white", marginBottom:6, animation:"pop 0.6s 0.1s ease both"}}>
+            정말 잘했어!
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:"white", opacity:0.95, marginBottom:18, animation:"pop 0.6s 0.2s ease both"}}>
+            탐구보고서 5단계를 끝까지 완성했어 👏
+          </div>
+
+          <div style={{
+            background:"rgba(255,255,255,0.16)", borderRadius:18, padding:"18px 20px",
+            maxWidth:340, marginBottom:26, animation:"pop 0.6s 0.3s ease both"
+          }}>
+            <div style={{fontSize:14, lineHeight:1.8, color:"white"}}>
+              끝까지 포기하지 않고<br/>
+              스스로 생각하고 고쳐낸 네가 진짜 과학자야.<br/>
+              <span style={{fontWeight:800}}>이건 정말 대단한 일이야! 🌟</span>
+            </div>
+          </div>
+
+          <button
+            onClick={()=>{ setShowCelebrate(false); if(!finalReport){ generateReport(); } else { setView("finalReport"); } }}
+            style={{
+              background:"white", color:C.primary, border:"none",
+              borderRadius:14, padding:"15px 28px",
+              fontSize:15, fontWeight:800, cursor:"pointer",
+              boxShadow:"0 6px 20px rgba(0,0,0,0.2)",
+              animation:"pop 0.6s 0.4s ease both"
+            }}>
+            내 탐구 리포트 확인하기 ✨
+          </button>
+
+          <button
+            onClick={()=>setShowCelebrate(false)}
+            style={{
+              marginTop:14, background:"none", border:"none",
+              color:"white", opacity:0.8, fontSize:13, cursor:"pointer",
+              textDecoration:"underline", animation:"pop 0.6s 0.5s ease both"
+            }}>
+            보고서 다시 보기
+          </button>
+        </div>
+      )}
+
       {/* ══════════ 종합 리포트 뷰 ══════════ */}
       {view==="finalReport" && (
         <div style={{flex:1,overflowY:"auto",padding:"20px 16px 60px"}}>
@@ -926,6 +1000,8 @@ export default function App() {
         *{box-sizing:border-box;}
         ::-webkit-scrollbar{display:none;}
         @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:0.4}40%{transform:translateY(-4px);opacity:1}}
+        @keyframes confetti{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(105vh) rotate(720deg);opacity:0.7}}
+        @keyframes pop{0%{transform:scale(0.6);opacity:0}60%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
       `}</style>
     </div>
   );

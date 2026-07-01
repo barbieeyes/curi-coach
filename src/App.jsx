@@ -145,12 +145,16 @@ ${sections}
 {
   "overallSummary": "전체적인 탐구 과정에 대한 2-3문장 총평. 따뜻하고 구체적으로",
   "strengths": ["강점 1 (구체적 근거 포함)", "강점 2"],
-  "challenges": ["어려움을 겪었던 부분 1 (구체적으로, 어떤 단계 어떤 점)", "어려움 2 (있다면)"],
+  "journeyDetail": [
+    {"stage": "단계 이름 (예: 가설)", "difficulty": "이 단계에서 학생이 구체적으로 무엇을 어려워했는지", "help": "큐리가 어떤 질문/힌트로 도와줬고, 그 결과 학생이 어떻게 바꿨는지"}
+  ],
   "improvements": ["1차에서 2차로 가면서 개선된 점 1 (구체적 변화 서술)", "개선점 2 (있다면)"],
   "curiosityLevel": "상/중/하 중 하나 — 챗봇 질문 빈도와 깊이로 판단",
   "scientificThinkingNote": "과학적 사고 과정에 대한 1-2문장 평가 (변인 통제, 측정 가능성, 논리적 결론 도출 등 관점에서)",
   "suggestionForTeacher": "선생님께 드리는 참고 코멘트 1-2문장 (이 학생을 지도할 때 참고할 점)"
-}`;
+}
+
+* journeyDetail은 학생이 실제로 어려워한 단계만 골라서 1~3개 작성해. 어려움 없이 잘한 단계는 넣지 마. difficulty는 "어디서 무엇을", help는 "어떤 도움을 줬고 어떻게 나아졌는지"가 드러나게 구체적으로 써.`;
 
   const raw = await callCuri(prompt);
   const match = raw.match(/\{[\s\S]*\}/);
@@ -165,6 +169,57 @@ function Spinner({ color }) {
         <span key={i} style={{width:5,height:5,borderRadius:"50%",background:color||C.primary,display:"inline-block",animation:`bounce 1s ${d}s infinite ease-in-out`}}/>
       ))}
     </span>
+  );
+}
+
+function LineChart({ data }) {
+  const pts = data.rows
+    .map(r => ({ x: r.x, y: parseFloat(r.y) }))
+    .filter(p => p.x && !isNaN(p.y));
+
+  if (pts.length < 2) {
+    return (
+      <div style={{textAlign:"center",padding:"30px 12px",color:C.inkFaint,fontSize:12.5,lineHeight:1.6}}>
+        숫자를 2개 이상 입력하면<br/>그래프가 자동으로 그려져요 📈
+      </div>
+    );
+  }
+
+  const W = 300, H = 180, padL = 38, padR = 14, padT = 16, padB = 34;
+  const ys = pts.map(p => p.y);
+  let minY = Math.min(...ys), maxY = Math.max(...ys);
+  if (minY === maxY) { minY -= 1; maxY += 1; }
+  const range = maxY - minY;
+  minY -= range * 0.1; maxY += range * 0.1;
+
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xPos = i => padL + (pts.length===1 ? plotW/2 : (i/(pts.length-1))*plotW);
+  const yPos = v => padT + plotH - ((v-minY)/(maxY-minY))*plotH;
+
+  const linePath = pts.map((p,i)=>`${i===0?"M":"L"}${xPos(i)},${yPos(p.y)}`).join(" ");
+  const gridY = [0,0.25,0.5,0.75,1].map(t => minY + t*(maxY-minY));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}}>
+      {gridY.map((gv,i)=>(
+        <g key={i}>
+          <line x1={padL} y1={yPos(gv)} x2={W-padR} y2={yPos(gv)} stroke={C.lineSoft} strokeWidth="1"/>
+          <text x={padL-6} y={yPos(gv)+3} textAnchor="end" fontSize="9" fill={C.inkFaint}>
+            {Math.round(gv*10)/10}
+          </text>
+        </g>
+      ))}
+      <path d={linePath} fill="none" stroke={C.primary} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+      {pts.map((p,i)=>(
+        <g key={i}>
+          <circle cx={xPos(i)} cy={yPos(p.y)} r="4" fill="white" stroke={C.primary} strokeWidth="2.5"/>
+          <text x={xPos(i)} y={H-padB+16} textAnchor="middle" fontSize="9" fill={C.inkSoft}>{p.x}</text>
+          <text x={xPos(i)} y={yPos(p.y)-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={C.primary}>{p.y}</text>
+        </g>
+      ))}
+      <text x={W/2} y={H-4} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600">{data.xLabel}</text>
+      <text x={10} y={H/2} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600" transform={`rotate(-90 10 ${H/2})`}>{data.yLabel}</text>
+    </svg>
   );
 }
 
@@ -198,6 +253,17 @@ ${field.baseDesc}
 }
 
 export default function App() {
+  const [started, setStarted] = useState(false);
+  const [student, setStudent] = useState({ grade:"", cls:"", num:"", name:"" });
+  const [tableData, setTableData] = useState({
+    xLabel: "측정 시점",
+    yLabel: "측정값",
+    rows: [
+      { x: "1일차", y: "" },
+      { x: "2일차", y: "" },
+      { x: "3일차", y: "" }
+    ]
+  });
   const [view, setView] = useState("report");
   const [chatOpen, setChatOpen] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -260,10 +326,23 @@ export default function App() {
 
   async function ask(){
     const id = sec.id;
-    if(isInputEmpty(sec, inputs[id])){ toast_("내용을 먼저 작성해주세요"); return; }
+    // 결과 섹션은 표+해석 기준으로 빈값 체크
+    if(id==="r"){
+      const hasData = tableData.rows.some(r=>r.x && r.y!=="");
+      if(!hasData && !inputs.r.trim()){ toast_("표에 값을 입력하거나 해석을 작성해주세요"); return; }
+    } else {
+      if(isInputEmpty(sec, inputs[id])){ toast_("내용을 먼저 작성해주세요"); return; }
+    }
     if(loading) return;
 
-    const text = flattenInput(sec, inputs[id]);
+    let text = flattenInput(sec, inputs[id]);
+    if(id==="r"){
+      const tableText = tableData.rows
+        .filter(r=>r.x && r.y!=="")
+        .map(r=>`${r.x}: ${r.y}`)
+        .join(", ");
+      text = `[측정 데이터] ${tableData.xLabel} 기준 ${tableData.yLabel} — ${tableText}\n[결과 해석] ${inputs.r.trim()}`;
+    }
     const newAtt = attempts[id]+1;
     setAttempts(p=>({...p,[id]:newAtt}));
     setInputHistory(p=>({...p,[id]:[...p[id],text]}));
@@ -344,9 +423,115 @@ export default function App() {
     setReportLoading(false);
   }
 
+  function savePDF(){
+    const esc = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br/>");
+    const finalOf = id => {
+      const h = inputHistory[id];
+      if (h && h.length) return esc(h[h.length-1]);
+      const v = inputs[id];
+      if (typeof v === "string") return esc(v);
+      if (v && typeof v === "object") {
+        const sec2 = SECTIONS.find(s=>s.id===id);
+        return sec2.fields.filter(f=>v[f.key]?.trim()).map(f=>`<b>${f.label}:</b> ${esc(v[f.key])}`).join("<br/>");
+      }
+      return "<i>(작성 없음)</i>";
+    };
+
+    const tableRows = tableData.rows.filter(r=>r.x && r.y!=="").map(r=>`<tr><td>${esc(r.x)}</td><td>${esc(r.y)}</td></tr>`).join("");
+    const resultBlock = `
+      ${tableRows ? `<table style="border-collapse:collapse;margin:8px 0;font-size:13px;">
+        <tr><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${esc(tableData.xLabel)}</th><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${esc(tableData.yLabel)}</th></tr>
+        ${tableRows.replace(/<td>/g,'<td style="border:1px solid #ccc;padding:5px 12px;text-align:center;">')}
+      </table>` : ""}
+      <div><b>결과 해석:</b> ${esc(inputs.r)||"<i>(작성 없음)</i>"}</div>`;
+
+    const sectionsHTML = SECTIONS.map(s=>{
+      const body = s.id==="r" ? resultBlock : finalOf(s.id);
+      return `<div style="margin-bottom:18px;">
+        <div style="font-size:15px;font-weight:800;color:#5847B8;margin-bottom:6px;">${s.num}. ${s.name}</div>
+        <div style="font-size:13.5px;line-height:1.7;color:#222;">${body}</div>
+      </div>`;
+    }).join("");
+
+    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>탐구보고서 - ${esc(student.name)}</title>
+      <style>@page{margin:18mm;} body{font-family:-apple-system,'Malgun Gothic',sans-serif;color:#222;padding:8px;}</style>
+      </head><body>
+      <div style="text-align:center;border-bottom:3px solid #6D5BD0;padding-bottom:12px;margin-bottom:18px;">
+        <div style="font-size:13px;color:#6D5BD0;font-weight:700;">Songrye Science AI 큐리</div>
+        <div style="font-size:22px;font-weight:900;margin-top:4px;">탐구보고서</div>
+      </div>
+      <div style="background:#f7f7fb;border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:13.5px;">
+        <b>${esc(student.grade)}학년 ${esc(student.cls)}반 ${esc(student.num)}번</b> · ${esc(student.name)}
+      </div>
+      ${sectionsHTML}
+      <div style="margin-top:24px;border-top:1px solid #ddd;padding-top:10px;font-size:11px;color:#999;text-align:center;">
+        이 보고서는 학생이 큐리(AI)의 질문형 코칭을 받으며 스스로 작성했습니다. 최종 평가는 교사가 진행합니다.
+      </div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},300);};</script>
+      </body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) { toast_("팝업이 차단됐어요. 팝업 허용 후 다시 눌러주세요"); return; }
+    w.document.write(html);
+    w.document.close();
+  }
+
   const btnText = loading ? null
     : secAttempt === 0 ? "큐리에게 1차 피드백 받기"
     : `${secAttempt + 1}차 피드백 받기`;
+
+  // ── 시작 화면 (학생 정보 입력) ──
+  if (!started) {
+    const canStart = student.grade && student.cls && student.num && student.name.trim();
+    const field = (label, key, placeholder, width) => (
+      <div style={{width}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.inkSoft,marginBottom:6}}>{label}</div>
+        <input
+          value={student[key]}
+          onChange={e=>setStudent(p=>({...p,[key]:e.target.value}))}
+          placeholder={placeholder}
+          inputMode={key==="name"?"text":"numeric"}
+          style={{width:"100%",border:`1.5px solid ${C.line}`,borderRadius:11,padding:"11px 13px",fontSize:14,fontFamily:"inherit",outline:"none",color:C.ink}}
+        />
+      </div>
+    );
+    return (
+      <div style={{fontFamily:"'Pretendard',-apple-system,system-ui,sans-serif",background:`linear-gradient(160deg,${C.primary},${C.accent})`,minHeight:"100vh",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 22px",color:"white"}}>
+        <div style={{fontSize:52,marginBottom:14}}>🧪</div>
+        <div style={{fontSize:15,fontWeight:700,opacity:0.9,marginBottom:6}}>Songrye Science AI 큐리와 함께</div>
+        <div style={{fontSize:24,fontWeight:900,textAlign:"center",lineHeight:1.35,marginBottom:8}}>
+          탐구보고서 작성하기
+        </div>
+        <div style={{fontSize:13,opacity:0.9,textAlign:"center",lineHeight:1.6,marginBottom:26}}>
+          나만의 탐구, 지금 시작해볼까?<br/>큐리랑 같이라면 할 수 있어! 💪✨
+        </div>
+
+        <div style={{background:"white",borderRadius:20,padding:22,width:"100%",maxWidth:360,boxShadow:"0 10px 40px rgba(0,0,0,0.15)"}}>
+          <div style={{fontSize:14,fontWeight:800,color:C.ink,marginBottom:16,textAlign:"center"}}>내 정보를 입력해줘</div>
+          <div style={{display:"flex",gap:10,marginBottom:12}}>
+            {field("학년","grade","1","33%")}
+            {field("반","cls","2","33%")}
+            {field("번호","num","15","34%")}
+          </div>
+          <div style={{marginBottom:20}}>
+            {field("이름","name","홍길동","100%")}
+          </div>
+          <button
+            onClick={()=>{ if(canStart) setStarted(true); }}
+            disabled={!canStart}
+            style={{
+              width:"100%",padding:15,
+              background:canStart?`linear-gradient(135deg,${C.primary},${C.primaryDark})`:C.lineSoft,
+              color:canStart?"white":C.inkFaint,
+              border:"none",borderRadius:13,fontSize:15,fontWeight:800,
+              cursor:canStart?"pointer":"default",transition:"all 0.2s"
+            }}>
+            {canStart ? "큐리와 함께 START! 🚀" : "큐리와 함께 START!"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{fontFamily:"'Pretendard',-apple-system,system-ui,sans-serif",background:C.bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",color:C.ink,display:"flex",flexDirection:"column",letterSpacing:"-0.01em",position:"relative"}}>
@@ -456,8 +641,74 @@ export default function App() {
               </div>
             </div>
 
+            {/* 입력 카드 — 결과 섹션 (표 입력 + 꺾은선그래프) */}
+            {sec.id==="r" && (
+              <div style={{marginBottom:13}}>
+                <div style={{fontSize:11.5,fontWeight:700,color:canProceed?C.good:C.inkSoft,marginBottom:10}}>
+                  {secAttempt===0?"측정한 값을 표에 입력하면 그래프가 그려져요":canProceed?`피드백 ${secAttempt}회 완료 — 더 다듬거나 다음으로 넘어가요`:"피드백을 반영해서 수정해봐요"}
+                </div>
+
+                {/* 축 이름 */}
+                <div style={{display:"flex",gap:8,marginBottom:10}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10.5,fontWeight:700,color:C.inkSoft,marginBottom:4}}>가로축 이름</div>
+                    <input value={tableData.xLabel} onChange={e=>setTableData(p=>({...p,xLabel:e.target.value}))}
+                      style={{width:"100%",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"7px 10px",fontSize:12.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10.5,fontWeight:700,color:C.inkSoft,marginBottom:4}}>세로축 이름</div>
+                    <input value={tableData.yLabel} onChange={e=>setTableData(p=>({...p,yLabel:e.target.value}))}
+                      style={{width:"100%",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"7px 10px",fontSize:12.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                  </div>
+                </div>
+
+                {/* 표 */}
+                <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:14,padding:12,marginBottom:10}}>
+                  <div style={{display:"flex",gap:8,marginBottom:8,fontSize:11,fontWeight:700,color:C.inkSoft,padding:"0 4px"}}>
+                    <div style={{flex:1}}>{tableData.xLabel}</div>
+                    <div style={{flex:1}}>{tableData.yLabel}</div>
+                    <div style={{width:28}}/>
+                  </div>
+                  {tableData.rows.map((row,ri)=>(
+                    <div key={ri} style={{display:"flex",gap:8,marginBottom:7,alignItems:"center"}}>
+                      <input value={row.x} placeholder="예: 1일차"
+                        onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],x:e.target.value};setTableData(p=>({...p,rows}));}}
+                        style={{flex:1,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:13,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                      <input value={row.y} placeholder="숫자" inputMode="decimal"
+                        onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],y:e.target.value};setTableData(p=>({...p,rows}));}}
+                        style={{flex:1,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:13,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                      <button onClick={()=>{ if(tableData.rows.length>1){const rows=tableData.rows.filter((_,i)=>i!==ri);setTableData(p=>({...p,rows}));} }}
+                        style={{width:28,height:28,borderRadius:8,border:"none",background:C.lineSoft,color:C.inkSoft,fontSize:15,cursor:"pointer",flexShrink:0}}>−</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setTableData(p=>({...p,rows:[...p.rows,{x:"",y:""}]}))}
+                    style={{width:"100%",marginTop:4,padding:9,border:`1.5px dashed ${C.primary}50`,borderRadius:9,background:C.primarySoft,color:C.primary,fontSize:12.5,fontWeight:700,cursor:"pointer"}}>
+                    + 행 추가
+                  </button>
+                </div>
+
+                {/* 그래프 */}
+                <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:14,padding:"14px 12px 8px",marginBottom:10}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.inkSoft,marginBottom:6,textAlign:"center"}}>📈 자동 생성 그래프</div>
+                  <LineChart data={tableData}/>
+                </div>
+
+                {/* 결과 해석 (자유 서술) */}
+                <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:14,padding:13}}>
+                  <div style={{fontSize:11.5,fontWeight:700,color:C.inkSoft,marginBottom:8}}>결과 해석 — 그래프에서 무엇을 알 수 있어?</div>
+                  <textarea
+                    value={inputs.r}
+                    onChange={e=>setInputs(p=>({...p,r:e.target.value}))}
+                    rows={4}
+                    placeholder="예) 시간이 지날수록 값이 점점 커졌다. 가설과 비교하면... / 예상과 다른 점은..."
+                    style={{width:"100%",border:"none",outline:"none",fontFamily:"inherit",fontSize:13.5,color:C.ink,resize:"none",background:"transparent",lineHeight:1.75}}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* 입력 카드 — 일반 섹션 (단일 텍스트박스) */}
-            {!sec.multiField && (
+            {!sec.multiField && sec.id!=="r" && (
               <div style={{
                 background:C.surface,borderRadius:16,
                 border:`1.5px solid ${canProceed?C.good+"50":C.line}`,
@@ -910,14 +1161,21 @@ export default function App() {
                 </div>
               )}
 
-              {/* 어려웠던 점 */}
-              {finalReport.challenges?.length>0 && (
+              {/* 단계별 어려움 → 큐리의 도움 */}
+              {finalReport.journeyDetail?.length>0 && (
                 <div style={{background:C.warnSoft,borderRadius:16,padding:16,marginBottom:14}}>
-                  <div style={{fontSize:12,fontWeight:700,color:C.warn,marginBottom:10}}>어려움이 있었던 부분</div>
-                  {finalReport.challenges.map((s,i)=>(
-                    <div key={i} style={{display:"flex",gap:8,marginBottom:i<finalReport.challenges.length-1?8:0,fontSize:13,lineHeight:1.7}}>
-                      <span style={{color:C.warn,fontWeight:700,flexShrink:0}}>·</span>
-                      <span style={{color:C.ink}}>{s}</span>
+                  <div style={{fontSize:12,fontWeight:700,color:C.warn,marginBottom:12}}>어디서 어려워했고, 어떻게 도왔나</div>
+                  {finalReport.journeyDetail.map((j,i)=>(
+                    <div key={i} style={{background:"white",borderRadius:12,padding:12,marginBottom:i<finalReport.journeyDetail.length-1?10:0}}>
+                      <div style={{fontSize:11.5,fontWeight:800,color:C.warn,marginBottom:7,display:"inline-block",background:C.warnSoft,padding:"2px 10px",borderRadius:99}}>
+                        {j.stage}
+                      </div>
+                      <div style={{fontSize:12.5,lineHeight:1.65,color:C.ink,marginBottom:7}}>
+                        <span style={{fontWeight:700,color:C.warn}}>어려움 · </span>{j.difficulty}
+                      </div>
+                      <div style={{fontSize:12.5,lineHeight:1.65,color:C.ink}}>
+                        <span style={{fontWeight:700,color:C.primary}}>큐리의 도움 · </span>{j.help}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -965,6 +1223,17 @@ export default function App() {
                   <div style={{fontSize:13,lineHeight:1.75,color:"white",opacity:0.95}}>{finalReport.suggestionForTeacher}</div>
                 </div>
               )}
+
+              <button onClick={savePDF} style={{
+                width:"100%",marginTop:20,padding:15,
+                background:`linear-gradient(135deg,${C.primary},${C.primaryDark})`,
+                color:"white",border:"none",borderRadius:14,
+                fontSize:14.5,fontWeight:800,cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                boxShadow:`0 4px 14px ${C.primary}40`
+              }}>
+                📄 내 탐구보고서 PDF로 저장하기
+              </button>
 
               <div style={{textAlign:"center",fontSize:10.5,color:C.inkFaint,marginTop:18}}>
                 이 리포트는 AI가 작성한 참고 자료입니다.<br/>최종 평가는 선생님이 진행합니다.

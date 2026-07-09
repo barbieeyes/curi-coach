@@ -123,13 +123,24 @@ ${is2nd ? "- 2차: 1차보다 세밀하게, 과학적 표현 정확성 집중" :
 [학생 작성]
 "${text}"
 
+[판정 기준]
+- verdict는 반드시 셋 중 하나: "good"(과학적으로 충분히 잘 씀), "think"(방향은 맞지만 더 생각이 필요), "revise"(수정이 필요)
+- grade는 이 단계 완성도: "Excellent"(아주 훌륭), "Great"(훌륭), "Good"(양호) 중 하나. 부족하면 grade를 생략하거나 "Good"
+
 순수 JSON만 응답:
-{"greeting":"2문장","good":"잘한점 1가지","needsRevision":true,"question":"핵심질문 1가지","hint":"힌트","isDeep":false,"deepQuestion":""}`;
+{"greeting":"2문장 인사·격려","verdict":"good|think|revise","grade":"Excellent|Great|Good","good":"잘한점 1가지","question":"핵심질문 1가지(수정/생각이 필요할 때)","hint":"힌트"}`;
 
   const raw = await callCuri(prompt);
   const match = raw.match(/\{[\s\S]*\}/);
-  if(!match) throw new Error("파싱 실패");
-  return JSON.parse(match[0]);
+  const SAFE = {greeting:"좋아, 잘 하고 있어! 큐리가 한 가지만 물어볼게 🧪",verdict:"think",grade:"Good",good:"스스로 끝까지 써낸 점이 멋져!",question:"이 부분을 조금 더 자세히 설명해줄 수 있어?",hint:""};
+  if(!match) return SAFE;
+  try {
+    const parsed = JSON.parse(match[0]);
+    return { ...SAFE, ...parsed };
+  } catch(e){
+    try { return { ...SAFE, ...JSON.parse(match[0].replace(/,\s*([}\]])/g,"$1")) }; }
+    catch(e2){ return SAFE; }
+  }
 }
 
 async function askQna(question, context) {
@@ -150,11 +161,20 @@ ${context ? `[현재 탐구 맥락]\n${context}\n` : ""}
   return await callCuri(prompt);
 }
 
-async function getFinalReport(allData) {
-  // 회차별 [작성 → 큐리 질문] 체인. 양이 많아도 안전하게 절단.
+function safeParse(raw, fallback){
+  let match = raw.match(/\{[\s\S]*\}/);
+  if(!match){ const o=raw.indexOf("{"); if(o===-1) return fallback; match=[raw.slice(o)]; }
+  try { return { ...fallback, ...JSON.parse(match[0].trim()) }; }
+  catch(e){
+    try { return { ...fallback, ...JSON.parse(match[0].trim().replace(/,\s*([}\]])/g,"$1")) }; }
+    catch(e2){ return fallback; }
+  }
+}
+
+async function getFinalReport(allData, onProgress) {
   const cut = (s, n) => (s || "").replace(/\s+/g, " ").trim().slice(0, n);
-  const sections = SECTIONS.map(s => {
-    const fbs = (allData.fbs[s.id] || []).slice(0, 8);        // 최대 8회차까지만
+  const sectionText = SECTIONS.map(s => {
+    const fbs = (allData.fbs[s.id] || []).slice(0, 8);
     const inputs = allData.inputHistory[s.id] || [];
     if (fbs.length === 0) return `[${s.name}] 기록 없음`;
     const chain = fbs.map((f, i) =>
@@ -163,53 +183,40 @@ async function getFinalReport(allData) {
     return `[${s.name}] 총 ${fbs.length}회 시도\n${chain}`;
   }).join("\n\n");
 
-  const prompt = `너는 과학 탐구 코치 "큐리(Curi)"야. 학생의 전체 탐구 과정을 분석해서 교사용 종합 리포트를 작성해줘.
+  // ── 1차 호출: 단계별 오류→질문→수정→성장 (짧게) ──
+  onProgress && onProgress("단계별 수정 과정을 분석하고 있어요");
+  const p1 = `너는 과학 탐구 코치 "큐리"야. 학생의 회차별 작성과 큐리 질문을 보고, 실제로 오류→수정이 일어난 단계만 분석해.
 
-[학생의 5단계 탐구 과정 — 회차별 작성과 큐리의 질문]
-${sections}
+${sectionText}
 
-[소통 패턴]
-- 챗봇에게 직접 질문한 횟수: ${allData.chatQuestionCount}회
-- 총 수정 시도 횟수: ${allData.totalAttempts}회
+순수 JSON만: {"journeyDetail":[{"stage":"단계명","mistake":"처음 작성의 오류·부족함(실제 근거)","curiQuestion":"큐리 핵심 질문","revision":"다음 차수에서 실제로 고친 내용","growth":"드러난 성장 1문장"}]}
+* 오류→수정이 있었던 단계만 1~4개. 지어내지 마.`;
+  const r1 = safeParse(await callCuri(p1), { journeyDetail: [] });
 
-각 단계에서 (1)학생이 처음에 어떤 오류·부족함이 있었는지 (2)큐리가 어떤 질문을 던졌는지 (3)학생이 다음 차수에서 어떻게 수정했는지 (4)그 과정에서 어떤 성장이 보였는지를 회차별 작성 내용을 비교해서 구체적으로 분석해.
+  // ── 2차 호출: 종합 총평·의사소통 성장 (짧게) ──
+  onProgress && onProgress("전체 성장과 총평을 정리하고 있어요");
+  const p2 = `너는 과학 탐구 코치 "큐리"야. 학생의 전체 탐구 과정을 보고 교사용 총평을 써.
 
-다음 형식의 순수 JSON으로만 응답해 (교사가 읽을 참고용. 점수가 아니라 과정 중심 서술):
-{
-  "overallSummary": "전체 탐구 과정 2-3문장 총평. 따뜻하고 구체적으로",
-  "strengths": ["강점 1 (구체적 근거)", "강점 2"],
-  "journeyDetail": [
-    {"stage": "단계 이름", "mistake": "처음 작성에서 보인 오류나 부족한 점 (실제 작성 내용 근거로)", "curiQuestion": "큐리가 던진 핵심 질문", "revision": "학생이 다음 차수에서 실제로 어떻게 고쳤는지", "growth": "이 수정 과정에서 드러난 사고·표현의 성장 1문장"}
-  ],
-  "communicationGrowth": "이 학생의 과학적 의사소통 능력(자기 생각을 과학 용어로 정확히 표현하고, 질문을 받아 수정하는 능력)이 전체 과정에서 어떻게 향상되었는지 2-3문장. 초기 표현과 최종 표현의 변화를 근거로",
-  "improvements": ["회차를 거치며 개선된 점 1", "개선점 2 (있다면)"],
-  "curiosityLevel": "상/중/하 중 하나 — 챗봇 질문 빈도와 깊이로 판단",
-  "scientificThinkingNote": "과학적 사고 과정 1-2문장 평가 (변인 통제, 측정 가능성, 논리적 결론 도출 관점)",
-  "suggestionForTeacher": "선생님께 드리는 지도 참고 코멘트 1-2문장"
-}
+${sectionText}
 
-* journeyDetail은 실제로 오류→수정이 있었던 단계만 1~4개. mistake/revision은 반드시 실제 작성 내용에 근거해서 써. 지어내지 마.`;
+[소통] 챗봇 질문 ${allData.chatQuestionCount}회 · 총 수정 ${allData.totalAttempts}회
 
-  const raw = await callCuri(prompt);
-  let match = raw.match(/\{[\s\S]*\}/);
-  if(!match){
-    const open = raw.indexOf("{");
-    if(open === -1) throw new Error("리포트 형식 오류");
-    match = [raw.slice(open)];
-  }
-  let jsonStr = match[0].trim();
-  const SAFE = {
-    overallSummary: "탐구 과정을 끝까지 완성했어요. 자세한 분석을 불러오지 못했어요. '다시 분석하기'를 눌러주세요.",
-    strengths: [], journeyDetail: [], communicationGrowth: "",
-    improvements: [], curiosityLevel: "-", scientificThinkingNote: "", suggestionForTeacher: ""
+순수 JSON만: {
+"overallSummary":"전체 과정 2-3문장 총평, 따뜻하고 구체적으로",
+"strengths":["강점1(근거)","강점2"],
+"communicationGrowth":"과학적 의사소통 능력(생각을 과학용어로 표현하고 질문받아 수정하는 능력)이 어떻게 향상됐는지 2-3문장, 초기와 최종 표현 변화 근거로",
+"improvements":["회차 거치며 개선된 점1","개선점2"],
+"curiosityLevel":"상|중|하",
+"scientificThinkingNote":"과학적 사고(변인통제·측정가능성·논리적 결론) 1-2문장",
+"suggestionForTeacher":"지도 참고 코멘트 1-2문장"}`;
+  const SAFE2 = {
+    overallSummary: "탐구 과정을 끝까지 잘 완성했어요.",
+    strengths: [], communicationGrowth: "", improvements: [],
+    curiosityLevel: "-", scientificThinkingNote: "", suggestionForTeacher: ""
   };
-  try {
-    return { ...SAFE, ...JSON.parse(jsonStr) };
-  } catch(e) {
-    let fixed = jsonStr.replace(/,\s*([}\]])/g, "$1");
-    try { return { ...SAFE, ...JSON.parse(fixed) }; }
-    catch(e2) { return SAFE; }
-  }
+  const r2 = safeParse(await callCuri(p2), SAFE2);
+
+  return { ...r2, journeyDetail: r1.journeyDetail || [] };
 }
 
 function Spinner({ color }) {
@@ -300,8 +307,8 @@ function LineChart({ data }) {
           <text x={xPos(i)} y={yPos(p.y)-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={C.primary}>{p.y}</text>
         </g>
       ))}
-      <text x={W/2} y={H-4} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600">{data.xLabel}</text>
-      <text x={10} y={H/2} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600" transform={`rotate(-90 10 ${H/2})`}>{data.yLabel}</text>
+      <text x={W/2} y={H-4} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600">{(data.xLabel||"가로축")}{data.xUnit?` (${data.xUnit})`:""}</text>
+      <text x={10} y={H/2} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600" transform={`rotate(-90 10 ${H/2})`}>{(data.yLabel||"세로축")}{data.yUnit?` (${data.yUnit})`:""}</text>
     </svg>
   );
 }
@@ -540,6 +547,7 @@ function Onboarding({ student, setStudent, onStart }) {
         @keyframes bobble{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
         @keyframes bubbleIn{0%{transform:translateY(12px) scale(0.94);opacity:0}100%{transform:translateY(0) scale(1);opacity:1}}
         @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:0.4}40%{transform:translateY(-4px);opacity:1}}
+        @keyframes sheetUp{0%{transform:translateY(100%)}100%{transform:translateY(0)}}
         @keyframes popCard{0%{transform:translateY(10px) scale(0.96);opacity:0}100%{transform:translateY(0) scale(1);opacity:1}}
         @keyframes shimmer{0%{background-position:0% 0}100%{background-position:200% 0}}
         @media (prefers-reduced-motion: reduce){*{animation:none !important;}}
@@ -552,13 +560,19 @@ export default function App() {
   const [started, setStarted] = useState(SAVED?.started ?? false);
   const [student, setStudent] = useState(SAVED?.student ?? { mode:"", grade:"", cls:"", num:"", name:"", members:[] });
   const [photos, setPhotos] = useState(SAVED?.photos ?? []); // {id, dataUrl, caption}
+  const [simLinks, setSimLinks] = useState(SAVED?.simLinks ?? []); // {id, url, desc}
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkDesc, setLinkDesc] = useState("");
   const [tableData, setTableData] = useState(SAVED?.tableData ?? {
-    xLabel: "측정 시점",
-    yLabel: "측정값",
+    xLabel: "",
+    yLabel: "",
+    xUnit: "",
+    yUnit: "",
+    qualitative: "",
     rows: [
-      { x: "1일차", y: "" },
-      { x: "2일차", y: "" },
-      { x: "3일차", y: "" }
+      { x: "", y: "" },
+      { x: "", y: "" },
+      { x: "", y: "" }
     ]
   });
   const [view, setView] = useState("report");
@@ -589,11 +603,12 @@ export default function App() {
 
   const [finalReport, setFinalReport] = useState(SAVED?.finalReport ?? null);
   const [submitting, setSubmitting] = useState(false);
+  const [fbModal, setFbModal] = useState(null);
   const [submitted, setSubmitted] = useState(SAVED?.submitted ?? false);
   const [showCelebrate, setShowCelebrate] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
 
-  const MIN_FEEDBACK = 3;
+  const MIN_FEEDBACK = 1;
 
   const sec = SECTIONS[idx];
   const doneN = Object.values(done).filter(Boolean).length;
@@ -601,6 +616,8 @@ export default function App() {
   const secFbs = fbs[sec.id];
   const secAttempt = attempts[sec.id];
   const canProceed = secAttempt >= MIN_FEEDBACK;
+  const prevNeed = idx>0 ? Math.max(0, MIN_FEEDBACK - (attempts[SECTIONS[idx-1].id]||0)) : 0;
+  const secLocked = prevNeed > 0 && !done[sec.id];
   const allDone = doneN === 5;
 
   useEffect(()=>{ chatEndRef.current?.scrollIntoView({behavior:"smooth"}); },[chatMsgs]);
@@ -608,7 +625,7 @@ export default function App() {
   // 자동 저장: 상태가 바뀌면 0.8초 후 저장 (연속 타이핑은 마지막 것만)
   useEffect(()=>{
     const t = setTimeout(()=>{
-      const data = { started, student, idx, inputs, inputHistory, done, attempts, fbs, tableData, photos, chatMsgs, chatQCount, finalReport, submitted };
+      const data = { started, student, idx, inputs, inputHistory, done, attempts, fbs, tableData, photos, simLinks, chatMsgs, chatQCount, finalReport, submitted };
       try {
         window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
       } catch(e){
@@ -617,7 +634,7 @@ export default function App() {
       }
     }, 800);
     return ()=>clearTimeout(t);
-  }, [started, student, idx, inputs, inputHistory, done, attempts, fbs, tableData, photos, chatMsgs, chatQCount, finalReport, submitted]);
+  }, [started, student, idx, inputs, inputHistory, done, attempts, fbs, tableData, photos, simLinks, chatMsgs, chatQCount, finalReport, submitted]);
 
   function resetAll(){
     if(!window.confirm("정말 처음부터 다시 시작할까요? 지금까지 쓴 내용이 모두 지워져요!")) return;
@@ -628,10 +645,10 @@ export default function App() {
   function toast_(msg){ setToast(msg); setTimeout(()=>setToast(""),2600); }
 
   function go(i){
-    if(i>0 && attempts[SECTIONS[i-1].id] < MIN_FEEDBACK){
-      toast_(`이전 단계에서 피드백을 ${MIN_FEEDBACK}번 받아야 이동할 수 있어요`); return;
-    }
     setIdx(i); setShowHint({});
+    if(i>0 && attempts[SECTIONS[i-1].id] < MIN_FEEDBACK && !done[SECTIONS[i].id]){
+      toast_("미리보기 중이에요 — 이전 단계 피드백 3번을 채우면 작성할 수 있어요");
+    }
   }
 
   function proceedNext(){
@@ -646,10 +663,11 @@ export default function App() {
 
   async function ask(){
     const id = sec.id;
+    if(secLocked){ toast_(`${SECTIONS[idx-1].name} 단계 피드백을 먼저 채워야 작성할 수 있어요`); return; }
     // 결과 섹션은 표+해석 기준으로 빈값 체크
     if(id==="r"){
       const hasData = tableData.rows.some(r=>r.x && r.y!=="");
-      if(!hasData && !inputs.r.trim()){ toast_("표에 값을 입력하거나 해석을 작성해주세요"); return; }
+      if(!hasData && !tableData.qualitative.trim() && !inputs.r.trim()){ toast_("관찰 내용이나 측정값, 또는 해석을 작성해주세요"); return; }
     } else {
       if(isInputEmpty(sec, inputs[id])){ toast_("내용을 먼저 작성해주세요"); return; }
     }
@@ -660,12 +678,15 @@ export default function App() {
       const capList = photos.map((p,i)=>`사진${i+1}: ${p.caption.trim()||"(설명 없음)"}`).join(" / ");
       text += `\n[실험 과정 사진 ${photos.length}장] ${capList}`;
     }
+    if(id==="e" && simLinks.length>0){
+      text += `\n[시뮬레이션 링크 ${simLinks.length}개] ` + simLinks.map(l=>`${l.desc||"링크"}: ${l.url}`).join(" / ");
+    }
     if(id==="r"){
       const tableText = tableData.rows
         .filter(r=>r.x && r.y!=="")
         .map(r=>`${r.x}: ${r.y}`)
         .join(", ");
-      text = `[측정 데이터] ${tableData.xLabel} 기준 ${tableData.yLabel} — ${tableText}\n[결과 해석] ${inputs.r.trim()}`;
+      text = `${tableData.qualitative.trim()?`[관찰 기록] ${tableData.qualitative.trim()}\n`:""}${tableText?`[측정 데이터] ${tableData.xLabel||"가로"} 기준 ${tableData.yLabel||"세로"} — ${tableText}\n`:""}[결과 해석] ${inputs.r.trim()}`;
     }
     const newAtt = attempts[id]+1;
     setAttempts(p=>({...p,[id]:newAtt}));
@@ -679,15 +700,8 @@ export default function App() {
       fb.time = new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
       setFbs(p=>({...p,[id]:[...p[id], fb]}));
       setLoading(false);
-      setTimeout(()=>fbRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),150);
-
-      if(newAtt < MIN_FEEDBACK){
-        toast_(`⚡+10P! ${MIN_FEEDBACK - newAtt}번 더 받으면 다음 단계가 열려요`);
-      } else if(newAtt === MIN_FEEDBACK){
-        toast_("⚡+10P! 다음 단계가 열렸어요! 🎉");
-      } else {
-        toast_("⚡+10P! 계속 다듬어도 좋고, 다음으로 가도 좋아요");
-      }
+      try{ navigator.vibrate && navigator.vibrate(25); }catch(e){}
+      setFbModal(fb);
     } catch(e){
       setFbs(p=>({...p,[id]:[...p[id],{
         greeting:`연결에 문제가 생겼어요. (${e.message}) 다시 시도해주세요.`,
@@ -710,6 +724,20 @@ export default function App() {
     } catch(err){
       toast_(err.message || "사진을 올리지 못했어요. 다시 시도해주세요");
     }
+  }
+
+  function addSimLink(){
+    let u = linkUrl.trim();
+    if(!u){ toast_("링크 주소를 입력해주세요"); return; }
+    if(!/^https?:\/\//i.test(u)) u = "https://" + u;
+    if(simLinks.length >= 5){ toast_("링크는 최대 5개까지예요"); return; }
+    setSimLinks(p=>[...p,{ id: Date.now(), url: u, desc: linkDesc.trim() }]);
+    setLinkUrl(""); setLinkDesc("");
+    toast_("링크가 추가됐어요! 🔗");
+  }
+
+  function removeSimLink(id){
+    setSimLinks(p=>p.filter(l=>l.id!==id));
   }
 
   function removePhoto(id){
@@ -756,12 +784,15 @@ export default function App() {
     setChatLoading(false);
   }
 
+  const [reportProgress, setReportProgress] = useState("");
   async function generateReport(){
+    setFinalReport(null);
     setReportLoading(true);
+    setReportProgress("큐리가 전체 과정을 살펴보는 중");
     setView("finalReport");
     try {
       const totalAttempts = Object.values(attempts).reduce((a,b)=>a+b,0);
-      const report = await getFinalReport({ fbs, inputHistory, chatQuestionCount:chatQCount, totalAttempts });
+      const report = await getFinalReport({ fbs, inputHistory, chatQuestionCount:chatQCount, totalAttempts }, (msg)=>setReportProgress(msg));
       setFinalReport(report);
     } catch(e){
       setFinalReport({ error: e.message });
@@ -782,8 +813,8 @@ export default function App() {
         mode: student.mode,
         q: flattenInput(SECTIONS[0], inputs.q),
         h: flattenInput(SECTIONS[1], inputs.h),
-        e: flattenInput(SECTIONS[2], inputs.e),
-        r: `[${tableData.xLabel}→${tableData.yLabel}] ${tableText} / 해석: ${(inputs.r||"").trim()}`,
+        e: flattenInput(SECTIONS[2], inputs.e) + (simLinks.length ? "\n[시뮬레이션] " + simLinks.map(l=>`${l.desc||"링크"}: ${l.url}`).join(" / ") : ""),
+        r: `${tableData.qualitative?`[관찰] ${tableData.qualitative} / `:""}${tableText?`[측정 ${tableData.xLabel}→${tableData.yLabel}] ${tableText} / `:""}해석: ${(inputs.r||"").trim()}`,
         c: flattenInput(SECTIONS[4], inputs.c),
         totalAttempts: Object.values(attempts).reduce((a,b)=>a+b,0),
         chatCount: chatQCount,
@@ -799,6 +830,75 @@ export default function App() {
       toast_("제출에 실패했어요. 인터넷 연결을 확인하고 다시 시도해주세요");
     }
     setSubmitting(false);
+  }
+
+  function saveCoachingLogPDF(){
+    const esc = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br/>");
+    const who = student.mode==="team"
+      ? `${esc(student.grade)}학년 ${esc(student.cls)}반 · 팀원: ${esc(student.members.join(", "))}`
+      : `${esc(student.grade)}학년 ${esc(student.cls)}반 ${esc(student.num)}번 ${esc(student.name)}`;
+
+    const maxAtt = Math.max(...SECTIONS.map(s=>attempts[s.id]||0));
+
+    const summaryRow = SECTIONS.map(s=>{
+      const n = attempts[s.id]||0;
+      const isMax = n===maxAtt && n>0;
+      return `<td style="border:1px solid #ddd;padding:6px 4px;text-align:center;font-size:12px;${isMax?"background:#FDF3E7;font-weight:800;color:#C07020;":""}">${n}회${isMax?" ★":""}</td>`;
+    }).join("");
+
+    const blocks = SECTIONS.map(s=>{
+      const f = fbs[s.id]||[];
+      const inp = inputHistory[s.id]||[];
+      const n = attempts[s.id]||0;
+      const isMax = n===maxAtt && n>0;
+      const criteria = (s.checks||[]).map(k=>`<li style="font-size:11.5px;line-height:1.6;">${esc(k)}</li>`).join("");
+      const log = f.map((fb,i)=>`
+        <tr>
+          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11px;text-align:center;white-space:nowrap;color:#6D5BD0;font-weight:700;">${i+1}차</td>
+          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11.5px;line-height:1.55;color:#333;">${esc((inp[i]||"").replace(/\s+/g," ").slice(0,130))}${(inp[i]||"").length>130?"…":""}</td>
+          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11.5px;line-height:1.55;color:#5847B8;">${esc((fb.question||fb.good||"").slice(0,130))}</td>
+        </tr>`).join("");
+      return `
+      <div style="margin-bottom:14px;page-break-inside:avoid;">
+        <div style="font-size:14px;font-weight:800;color:#5847B8;margin-bottom:4px;">
+          ${s.num}. ${esc(s.name)} — 코칭 ${n}회${isMax?' <span style="background:#FDF3E7;color:#C07020;font-size:11px;border-radius:99px;padding:2px 10px;">★ 가장 오래 머문 단계</span>':""}
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#888;margin:4px 0 2px;">피드백 기준(통과 조건)</div>
+        <ul style="margin:0 0 6px 16px;padding:0;">${criteria}</ul>
+        ${log ? `<table style="border-collapse:collapse;width:100%;">
+          <tr>
+            <th style="border:1px solid #e5e5ee;padding:5px;font-size:10.5px;background:#F4F2FB;">회차</th>
+            <th style="border:1px solid #e5e5ee;padding:5px;font-size:10.5px;background:#F4F2FB;">학생 작성 (요약)</th>
+            <th style="border:1px solid #e5e5ee;padding:5px;font-size:10.5px;background:#F4F2FB;">큐리의 코칭 질문</th>
+          </tr>${log}</table>` : `<div style="font-size:11.5px;color:#aaa;">코칭 기록 없음</div>`}
+      </div>`;
+    }).join("");
+
+    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>코칭 기록지 - ${esc(student.name||"팀")}</title>
+      <style>@page{margin:14mm;} body{font-family:-apple-system,'Malgun Gothic',sans-serif;color:#222;padding:6px;}</style>
+      </head><body>
+      <div style="text-align:center;border-bottom:3px solid #6D5BD0;padding-bottom:10px;margin-bottom:12px;">
+        <div style="font-size:11px;color:#6D5BD0;font-weight:700;">Songrye Science AI 큐리 · 코칭 기록지 (원본 기록)</div>
+        <div style="font-size:19px;font-weight:900;margin-top:3px;">어디서 머뭇거렸고, 어떤 코칭을 받았나</div>
+      </div>
+      <div style="background:#F7F7FB;border-radius:9px;padding:9px 13px;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;">
+        <b>${who}</b><span>총 코칭 ${Object.values(attempts).reduce((a,b)=>a+b,0)}회 · 챗봇 질문 ${chatQCount}회</span>
+      </div>
+      <table style="border-collapse:collapse;width:100%;margin-bottom:14px;">
+        <tr>${SECTIONS.map(s=>`<th style="border:1px solid #ddd;padding:5px;font-size:11px;background:#F4F2FB;">${esc(s.name)}</th>`).join("")}</tr>
+        <tr>${summaryRow}</tr>
+      </table>
+      ${blocks}
+      <div style="margin-top:14px;border-top:1px solid #ddd;padding-top:8px;font-size:10px;color:#999;text-align:center;">
+        시도 횟수와 회차별 작성·질문은 앱에 기록된 원본 데이터입니다. ★는 코칭을 가장 많이 받은(머뭇거린) 단계입니다. 최종 평가는 교사가 진행합니다.
+      </div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},400);};</script>
+      </body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) { toast_("팝업이 차단됐어요. 팝업 허용 후 다시 눌러주세요"); return; }
+    w.document.write(html);
+    w.document.close();
   }
 
   function saveTeacherPDF(){
@@ -875,9 +975,12 @@ export default function App() {
     };
 
     const tableRows = tableData.rows.filter(r=>r.x && r.y!=="").map(r=>`<tr><td>${esc(r.x)}</td><td>${esc(r.y)}</td></tr>`).join("");
+    const xh = esc(tableData.xLabel||"가로축") + (tableData.xUnit?` (${esc(tableData.xUnit)})`:"");
+    const yh = esc(tableData.yLabel||"세로축") + (tableData.yUnit?` (${esc(tableData.yUnit)})`:"");
     const resultBlock = `
+      ${tableData.qualitative?`<div style="margin-bottom:8px;"><b>관찰 기록:</b> ${esc(tableData.qualitative)}</div>`:""}
       ${tableRows ? `<table style="border-collapse:collapse;margin:8px 0;font-size:13px;">
-        <tr><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${esc(tableData.xLabel)}</th><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${esc(tableData.yLabel)}</th></tr>
+        <tr><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${xh}</th><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${yh}</th></tr>
         ${tableRows.replace(/<td>/g,'<td style="border:1px solid #ccc;padding:5px 12px;text-align:center;">')}
       </table>` : ""}
       <div><b>결과 해석:</b> ${esc(inputs.r)||"<i>(작성 없음)</i>"}</div>`;
@@ -894,9 +997,15 @@ export default function App() {
         </div>
       </div>` : "";
 
+    const linksHTML = simLinks.length>0 ? `
+      <div style="margin-top:8px;">
+        <div style="font-size:13px;font-weight:700;color:#5847B8;margin-bottom:4px;">🔗 시뮬레이션 링크</div>
+        ${simLinks.map(l=>`<div style="font-size:11.5px;line-height:1.6;word-break:break-all;">· ${esc(l.desc)||"링크"} — <a href="${l.url}">${esc(l.url)}</a></div>`).join("")}
+      </div>` : "";
+
     const sectionsHTML = SECTIONS.map(s=>{
       const body = s.id==="r" ? resultBlock : finalOf(s.id);
-      const extra = s.id==="e" ? photosHTML : "";
+      const extra = s.id==="e" ? photosHTML + linksHTML : "";
       return `<div style="margin-bottom:18px;">
         <div style="font-size:15px;font-weight:800;color:#5847B8;margin-bottom:6px;">${s.num}. ${s.name}</div>
         <div style="font-size:13.5px;line-height:1.7;color:#222;">${body}</div>
@@ -905,8 +1014,22 @@ export default function App() {
     }).join("");
 
     const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>탐구보고서 - ${esc(student.name)}</title>
-      <style>@page{margin:18mm;} body{font-family:-apple-system,'Malgun Gothic',sans-serif;color:#222;padding:8px;}</style>
+      <style>
+        @page{margin:18mm;}
+        body{font-family:-apple-system,'Malgun Gothic',sans-serif;color:#222;padding:0;margin:0;background:#f0f0f5;}
+        .sheet{background:white;max-width:700px;margin:0 auto;padding:32px 28px;}
+        .bar{position:sticky;top:0;background:white;border-bottom:1px solid #eee;padding:12px 16px;display:flex;gap:8px;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,0.06);}
+        .bar button{border:none;border-radius:10px;padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;}
+        .print-btn{background:linear-gradient(135deg,#6D5BD0,#2BA89A);color:white;}
+        .close-btn{background:#eee;color:#555;}
+        @media print{.bar{display:none;} body{background:white;} .sheet{max-width:none;padding:0;}}
+      </style>
       </head><body>
+      <div class="bar">
+        <button class="print-btn" onclick="window.print()">🖨️ 인쇄 / PDF로 저장</button>
+        <button class="close-btn" onclick="window.close()">닫기</button>
+      </div>
+      <div class="sheet">
       <div style="text-align:center;border-bottom:3px solid #6D5BD0;padding-bottom:12px;margin-bottom:18px;">
         <div style="font-size:13px;color:#6D5BD0;font-weight:700;">Songrye Science AI 큐리</div>
         <div style="font-size:22px;font-weight:900;margin-top:4px;">탐구보고서</div>
@@ -918,7 +1041,7 @@ export default function App() {
       <div style="margin-top:24px;border-top:1px solid #ddd;padding-top:10px;font-size:11px;color:#999;text-align:center;">
         이 보고서는 학생이 큐리(AI)의 질문형 코칭을 받으며 스스로 작성했습니다. 최종 평가는 교사가 진행합니다.
       </div>
-      <script>window.onload=function(){setTimeout(function(){window.print();},600);};</script>
+      </div>
       </body></html>`;
 
     const w = window.open("", "_blank");
@@ -995,13 +1118,13 @@ export default function App() {
                   padding:"9px 13px",borderRadius:13,
                   border:`2px solid ${isDone?C.good:isAct?SEC_TONE[s.id].main:C.line}`,
                   background:isDone?C.goodSoft:isAct?SEC_TONE[s.id].soft:C.surface,
-                  cursor:locked?"not-allowed":"pointer",opacity:locked?0.45:1,minWidth:66,
+                  cursor:"pointer",opacity:locked?0.6:1,minWidth:66,
                   transition:"all 0.15s",position:"relative"
                 }}>
                   <span style={{fontSize:20}}>{s.icon}</span>
                   <span style={{fontSize:12,fontWeight:700,color:isDone?C.good:isAct?SEC_TONE[s.id].main:C.inkSoft}}>{s.name}</span>
                   <span style={{fontSize:10,lineHeight:1,color:isDone?C.good:locked?C.inkFaint:C.primary,fontWeight:700}}>
-                    {isDone?"✓ 완료":locked?"🔒":isAct?"작성 중":"이동 가능"}
+                    {isDone?"✓ 완료":locked?"🔒 보기만":isAct?"작성 중":"이동 가능"}
                   </span>
                 </div>
               );
@@ -1086,32 +1209,67 @@ export default function App() {
               </div>
             )}
 
+            {/* 🔒 잠금 배너 (미리보기 모드) */}
+            {secLocked && (
+              <div style={{background:C.warnSoft,border:`1.5px solid ${C.warn}40`,borderRadius:14,padding:"12px 15px",marginBottom:13,display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:22}}>🔒</span>
+                <div style={{fontSize:13.5,lineHeight:1.6,color:C.ink}}>
+                  <b>지금은 구경만 할 수 있어!</b><br/>
+                  <span style={{color:C.inkSoft,fontSize:12.5}}>{SECTIONS[idx-1].name}에서 피드백 {prevNeed}번 더 받으면 여기가 열려 ✨</span>
+                </div>
+              </div>
+            )}
+
+            <div style={{pointerEvents:secLocked?"none":"auto",opacity:secLocked?0.5:1,transition:"opacity 0.2s"}}>
+
             {/* 입력 카드 — 결과 섹션 (표 입력 + 꺾은선그래프) */}
             {sec.id==="r" && (
               <div style={{marginBottom:13}}>
                 <div style={{fontSize:12.5,fontWeight:700,color:canProceed?C.good:C.inkSoft,marginBottom:10}}>
-                  {secAttempt===0?"측정한 값을 표에 입력하면 그래프가 그려져요":canProceed?`피드백 ${secAttempt}회 완료 — 더 다듬거나 다음으로 넘어가요`:"피드백을 반영해서 수정해봐요"}
+                  {secAttempt===0?"측정값(숫자)이나 관찰한 내용을 기록해봐":canProceed?`피드백 ${secAttempt}회 완료 — 더 다듬거나 다음으로 넘어가요`:"피드백을 반영해서 수정해봐요"}
                 </div>
 
-                {/* 축 이름 */}
+                {/* 📝 정성적 관찰 기록 */}
+                <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:14,padding:13,marginBottom:12}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.ink,marginBottom:3}}>📝 관찰 기록 <span style={{fontSize:11,fontWeight:600,color:C.accent}}>색·모양·상태 변화 등</span></div>
+                  <div style={{fontSize:11.5,color:C.inkSoft,marginBottom:8,lineHeight:1.5}}>숫자로 재기 어려운 변화(색이 변했다, 거품이 생겼다 등)를 글로 적어봐</div>
+                  <textarea value={tableData.qualitative} onChange={e=>setTableData(p=>({...p,qualitative:e.target.value}))} rows={3}
+                    placeholder="예) 5분 후 용액이 파란색에서 초록색으로 변했고, 작은 거품이 올라왔다."
+                    style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px",fontSize:13.5,fontFamily:"inherit",outline:"none",color:C.ink,resize:"none",lineHeight:1.6}}/>
+                </div>
+
+                <div style={{fontSize:12,fontWeight:700,color:C.inkSoft,marginBottom:8}}>🔢 숫자로 측정했다면 표에 입력해봐 <span style={{fontWeight:600,color:C.inkFaint}}>(선택)</span></div>
+
+                {/* 축 이름 + 단위 */}
                 <div style={{display:"flex",gap:8,marginBottom:10}}>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:11.5,fontWeight:700,color:C.inkSoft,marginBottom:4}}>가로축 이름</div>
-                    <input value={tableData.xLabel} onChange={e=>setTableData(p=>({...p,xLabel:e.target.value}))}
-                      style={{width:"100%",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"7px 10px",fontSize:13.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                    <div style={{fontSize:11.5,fontWeight:700,color:C.inkSoft,marginBottom:4}}>가로축 <span style={{color:SEC_TONE.r.main}}>(조작변인)</span></div>
+                    <input value={tableData.xLabel} onChange={e=>setTableData(p=>({...p,xLabel:e.target.value}))} placeholder="내가 바꾼 것"
+                      style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"7px 10px",fontSize:13.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                    <input value={tableData.xUnit} onChange={e=>setTableData(p=>({...p,xUnit:e.target.value}))} placeholder="단위 (예: ℃, g)"
+                      style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"6px 10px",fontSize:12.5,fontFamily:"inherit",outline:"none",color:C.inkSoft,marginTop:5}}/>
                   </div>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:11.5,fontWeight:700,color:C.inkSoft,marginBottom:4}}>세로축 이름</div>
-                    <input value={tableData.yLabel} onChange={e=>setTableData(p=>({...p,yLabel:e.target.value}))}
-                      style={{width:"100%",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"7px 10px",fontSize:13.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                    <div style={{fontSize:11.5,fontWeight:700,color:C.inkSoft,marginBottom:4}}>세로축 <span style={{color:SEC_TONE.r.main}}>(종속변인)</span></div>
+                    <input value={tableData.yLabel} onChange={e=>setTableData(p=>({...p,yLabel:e.target.value}))} placeholder="측정한 것"
+                      style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"7px 10px",fontSize:13.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                    <input value={tableData.yUnit} onChange={e=>setTableData(p=>({...p,yUnit:e.target.value}))} placeholder="단위 (예: 초, cm)"
+                      style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:9,padding:"6px 10px",fontSize:12.5,fontFamily:"inherit",outline:"none",color:C.inkSoft,marginTop:5}}/>
                   </div>
+                </div>
+                {/* 자주 쓰는 단위 빠른 선택 */}
+                <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
+                  <span style={{fontSize:11,color:C.inkFaint,alignSelf:"center"}}>빠른 단위:</span>
+                  {["℃","초","분","cm","mm","g","mL","개","회","%"].map(u=>(
+                    <button key={u} onClick={()=>setTableData(p=>({...p,yUnit:u}))} style={{fontSize:11.5,fontWeight:600,padding:"4px 9px",borderRadius:99,border:`1px solid ${C.line}`,background:tableData.yUnit===u?SEC_TONE.r.soft:C.surface,color:tableData.yUnit===u?SEC_TONE.r.main:C.inkSoft,cursor:"pointer"}}>{u}</button>
+                  ))}
                 </div>
 
                 {/* 표 */}
                 <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:14,padding:12,marginBottom:10}}>
                   <div style={{display:"flex",gap:8,marginBottom:8,fontSize:12,fontWeight:700,color:C.inkSoft,padding:"0 4px"}}>
-                    <div style={{flex:1}}>{tableData.xLabel}</div>
-                    <div style={{flex:1}}>{tableData.yLabel}</div>
+                    <div style={{flex:1}}>{tableData.xLabel||"가로축"}{tableData.xUnit?` (${tableData.xUnit})`:""}</div>
+                    <div style={{flex:1}}>{tableData.yLabel||"세로축"}{tableData.yUnit?` (${tableData.yUnit})`:""}</div>
                     <div style={{width:28}}/>
                   </div>
                   {tableData.rows.map((row,ri)=>(
@@ -1246,11 +1404,11 @@ export default function App() {
             {sec.id==="e" && (
               <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:15,padding:13,marginBottom:13}}>
                 <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:4}}>
-                  <div style={{fontSize:14.5,fontWeight:700,color:C.ink}}>📸 실험 과정 사진</div>
-                  <div style={{fontSize:11.5,fontWeight:600,color:C.accent}}>선택 · 최대 6장</div>
+                  <div style={{fontSize:14.5,fontWeight:700,color:C.ink}}>📸 실험 과정 기록</div>
+                  <div style={{fontSize:11.5,fontWeight:600,color:C.accent}}>사진 또는 링크 · 선택</div>
                 </div>
                 <div style={{fontSize:12.5,color:C.inkSoft,lineHeight:1.6,marginBottom:11}}>
-                  실험하는 모습을 찍어서 남겨봐! 사진마다 간단한 설명을 쓰면 보고서가 더 멋져져 ✨
+                  실험 사진을 찍거나, 시뮬레이션 링크(자바실험실·직접 만든 웹앱)를 붙여봐! ✨
                 </div>
 
                 {photos.map((ph,pi)=>(
@@ -1274,6 +1432,33 @@ export default function App() {
                     📷 {photos.length===0?"사진 찍기 / 올리기":"사진 추가"}
                     <input type="file" accept="image/*" onChange={addPhoto} style={{display:"none"}}/>
                   </label>
+                )}
+
+                {/* 🔗 시뮬레이션 링크 */}
+                <div style={{height:1,background:C.lineSoft,margin:"13px 0"}}/>
+                <div style={{fontSize:13,fontWeight:700,color:C.ink,marginBottom:8}}>🔗 시뮬레이션 링크 <span style={{fontSize:11,fontWeight:600,color:C.accent}}>최대 5개</span></div>
+
+                {simLinks.map((l,li)=>(
+                  <div key={l.id} style={{display:"flex",alignItems:"center",gap:8,background:C.bg,borderRadius:11,padding:"9px 12px",marginBottom:7}}>
+                    <span style={{fontSize:15,flexShrink:0}}>🔗</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <a href={l.url} target="_blank" rel="noopener noreferrer" style={{fontSize:13,color:C.primary,fontWeight:700,textDecoration:"underline",wordBreak:"break-all",display:"block"}}>{l.desc || l.url}</a>
+                      {l.desc && <div style={{fontSize:10.5,color:C.inkFaint,wordBreak:"break-all"}}>{l.url}</div>}
+                    </div>
+                    <button onClick={()=>removeSimLink(l.id)} style={{width:26,height:26,borderRadius:8,border:"none",background:C.lineSoft,color:C.inkSoft,fontSize:14,cursor:"pointer",flexShrink:0}}>✕</button>
+                  </div>
+                ))}
+
+                {simLinks.length < 5 && (
+                  <div>
+                    <input value={linkUrl} onChange={e=>setLinkUrl(e.target.value)} placeholder="링크 주소 (예: javalab.org/...)"
+                      style={{width:"100%",boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:10,padding:"9px 12px",fontSize:13,fontFamily:"inherit",outline:"none",color:C.ink,marginBottom:7}}/>
+                    <div style={{display:"flex",gap:7}}>
+                      <input value={linkDesc} onChange={e=>setLinkDesc(e.target.value)} placeholder="간단한 설명 (선택)"
+                        style={{flex:1,boxSizing:"border-box",border:`1.5px solid ${C.line}`,borderRadius:10,padding:"9px 12px",fontSize:13,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                      <button onClick={addSimLink} style={{padding:"9px 16px",borderRadius:10,border:"none",background:C.accentSoft,color:C.accent,fontSize:13,fontWeight:700,cursor:"pointer",flexShrink:0}}>+ 추가</button>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -1324,6 +1509,8 @@ export default function App() {
               {idx<4 ? `다음 단계로 — ${SECTIONS[idx+1].name}` : "탐구보고서 완성하기"}
               <span style={{fontSize:16.5}}>{canProceed?"→":"🔒"}</span>
             </button>
+
+            </div>
 
             {/* 피드백 이력 */}
             {secFbs.length>0 && (
@@ -1611,10 +1798,11 @@ export default function App() {
         <div style={{flex:1,overflowY:"auto",padding:"20px 16px 60px"}}>
 
           {reportLoading && (
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"80px 20px",gap:14}}>
-              <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,${C.primary},${C.accent})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>🧪</div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"70px 20px",gap:14}}>
+              <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,${C.primary},${C.accent})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,animation:"bobble 2.5s ease-in-out infinite"}}>🧪</div>
               <Spinner/>
-              <div style={{fontSize:14.5,color:C.inkSoft,textAlign:"center"}}>큐리가 5단계 전체 과정을<br/>분석하고 있어요</div>
+              <div style={{fontSize:14.5,color:C.ink,fontWeight:700,textAlign:"center"}}>{reportProgress || "분석하고 있어요"}</div>
+              <div style={{fontSize:12.5,color:C.inkFaint,textAlign:"center",lineHeight:1.6}}>꼼꼼히 살펴보느라 조금 걸릴 수 있어요<br/>잠깐만 기다려줘 (최대 1분) 🔍</div>
             </div>
           )}
 
@@ -1624,6 +1812,72 @@ export default function App() {
                 <div style={{width:56,height:56,borderRadius:"50%",background:`linear-gradient(135deg,${C.primary},${C.accent})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,margin:"0 auto 12px",boxShadow:`0 4px 16px ${C.primary}35`}}>🧪</div>
                 <div style={{fontSize:20,fontWeight:800}}>탐구 과정 종합 리포트</div>
                 <div style={{fontSize:13,color:C.inkSoft,marginTop:4}}>큐리가 분석한 전체 탐구 여정 · 참고용</div>
+              </div>
+
+              {/* 📋 내 탐구보고서 전체 보기 (한 페이지) */}
+              <div style={{background:C.surface,border:`2px solid ${C.primary}25`,borderRadius:18,padding:17,marginBottom:18}}>
+                <div style={{fontSize:15,fontWeight:800,color:C.primaryDark,marginBottom:4}}>📋 내 탐구보고서</div>
+                <div style={{fontSize:12,color:C.inkSoft,marginBottom:14}}>
+                  {student.mode==="team"
+                    ? `${student.grade}학년 ${student.cls}반 · ${student.members.join(", ")}`
+                    : `${student.grade}학년 ${student.cls}반 ${student.num}번 ${student.name}`}
+                </div>
+                {SECTIONS.map(s=>{
+                  let body = null;
+                  if(s.multiField){
+                    const v = inputs[s.id] || {};
+                    const filled = s.fields.filter(f=>v[f.key]?.trim());
+                    body = filled.length ? filled.map(f=>(
+                      <div key={f.key} style={{fontSize:14,lineHeight:1.7,marginBottom:4}}>
+                        <span style={{fontWeight:700,color:SEC_TONE[s.id].main}}>{f.label}</span> · {v[f.key]}
+                      </div>
+                    )) : <div style={{fontSize:13,color:C.inkFaint}}>(작성 없음)</div>;
+                  } else if(s.id==="r"){
+                    const rows = tableData.rows.filter(r=>r.x && r.y!=="");
+                    body = (
+                      <>
+                        {rows.length>0 && (
+                          <div style={{background:C.bg,borderRadius:10,padding:"9px 12px",marginBottom:8,fontSize:13.5,lineHeight:1.7}}>
+                            <span style={{fontWeight:700,color:SEC_TONE.r.main}}>{tableData.xLabel} → {tableData.yLabel}</span><br/>
+                            {rows.map(r=>`${r.x}: ${r.y}`).join("  ·  ")}
+                          </div>
+                        )}
+                        {rows.length>=2 && <div style={{marginBottom:8}}><LineChart data={tableData}/></div>}
+                        <div style={{fontSize:14,lineHeight:1.7}}>
+                          <span style={{fontWeight:700,color:SEC_TONE.r.main}}>해석</span> · {(inputs.r||"").trim() || <span style={{color:C.inkFaint}}>(작성 없음)</span>}
+                        </div>
+                      </>
+                    );
+                  } else {
+                    body = <div style={{fontSize:14,lineHeight:1.75,whiteSpace:"pre-wrap"}}>{(inputs[s.id]||"").trim() || <span style={{color:C.inkFaint}}>(작성 없음)</span>}</div>;
+                  }
+                  return (
+                    <div key={s.id} style={{marginBottom:14,paddingBottom:14,borderBottom:`1px solid ${C.lineSoft}`}}>
+                      <div style={{display:"inline-flex",alignItems:"center",gap:6,background:SEC_TONE[s.id].soft,borderRadius:99,padding:"4px 13px",marginBottom:8}}>
+                        <span style={{fontSize:14}}>{s.icon}</span>
+                        <span style={{fontSize:12.5,fontWeight:800,color:SEC_TONE[s.id].main}}>{s.num}. {s.name}</span>
+                      </div>
+                      {body}
+                      {s.id==="e" && simLinks.length>0 && (
+                        <div style={{marginTop:8}}>
+                          {simLinks.map(l=>(
+                            <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer" style={{display:"block",fontSize:13,color:C.primary,fontWeight:700,textDecoration:"underline",marginBottom:3,wordBreak:"break-all"}}>🔗 {l.desc||l.url}</a>
+                          ))}
+                        </div>
+                      )}
+                      {s.id==="e" && photos.length>0 && (
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:9}}>
+                          {photos.map((ph,pi)=>(
+                            <div key={ph.id} style={{width:"calc(33.3% - 4px)"}}>
+                              <img src={ph.dataUrl} alt={`사진${pi+1}`} style={{width:"100%",borderRadius:8,display:"block"}}/>
+                              {ph.caption && <div style={{fontSize:10.5,color:C.inkSoft,marginTop:2,lineHeight:1.4}}>{pi+1}. {ph.caption}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* 전체 총평 */}
@@ -1750,11 +2004,13 @@ export default function App() {
                 display:"flex",alignItems:"center",justifyContent:"center",gap:8,
                 boxShadow:`0 4px 14px ${C.primary}40`
               }}>
-                📄 내 탐구보고서 PDF로 저장하기
+                📄 최종 보고서 보기 (인쇄·저장)
               </button>
 
+              <div style={{fontSize:11.5,color:C.inkFaint,textAlign:"center",margin:"14px 0 8px",fontWeight:700}}>─ 선생님용 자료 ─</div>
+
               <button onClick={saveTeacherPDF} style={{
-                width:"100%",marginTop:10,padding:15,
+                width:"100%",padding:15,
                 background:C.surface,
                 color:C.ink,border:`1.5px solid ${C.line}`,borderRadius:14,
                 fontSize:15.5,fontWeight:700,cursor:"pointer",
@@ -1763,13 +2019,23 @@ export default function App() {
                 🍎 선생님 제출용 분석 리포트 PDF
               </button>
 
+              <button onClick={saveCoachingLogPDF} style={{
+                width:"100%",marginTop:10,padding:15,
+                background:C.surface,
+                color:C.ink,border:`1.5px solid ${C.line}`,borderRadius:14,
+                fontSize:15.5,fontWeight:700,cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",gap:8
+              }}>
+                🗂 코칭 기록지 PDF (머뭇거린 곳 · 받은 코칭)
+              </button>
+
               <div style={{textAlign:"center",fontSize:11.5,color:C.inkFaint,marginTop:18}}>
                 이 리포트는 AI가 작성한 참고 자료입니다.<br/>최종 평가는 선생님이 진행합니다.
               </div>
             </>
           )}
 
-          {finalReport?.error && (
+          {finalReport?.error && !reportLoading && (
             <div style={{textAlign:"center",padding:"60px 20px"}}>
               <div style={{fontSize:14.5,color:C.coral,marginBottom:12}}>리포트 생성 중 오류가 발생했어요</div>
               <button onClick={generateReport} style={{padding:"10px 20px",background:C.primary,color:"white",border:"none",borderRadius:10,fontSize:14.5,fontWeight:700,cursor:"pointer"}}>
@@ -1779,6 +2045,63 @@ export default function App() {
           )}
         </div>
       )}
+
+      {/* ══ 피드백 판정 팝업 ══ */}
+      {fbModal && (() => {
+        const V = {
+          good:  {icon:"🎉", label:"아주 좋아!",      color:C.good,  soft:C.goodSoft,  sub:"과학적으로 충분히 잘 썼어!"},
+          think: {icon:"🤔", label:"조금 더 생각해볼까?", color:C.warn,  soft:C.warnSoft,  sub:"방향은 좋아! 한 걸음만 더 가보자"},
+          revise:{icon:"✏️", label:"같이 고쳐보자!",    color:C.coral, soft:C.coralSoft, sub:"큐리의 질문을 보고 다듬어봐"}
+        }[fbModal.verdict] || {icon:"🧪",label:"큐리의 피드백",color:C.primary,soft:C.primarySoft,sub:""};
+        const gradeColor = {Excellent:"#E0654E",Great:"#E8912D",Good:"#2BA89A"}[fbModal.grade] || C.primary;
+        return (
+          <div onClick={()=>setFbModal(null)} style={{position:"fixed",inset:0,zIndex:400,background:"rgba(30,25,60,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",padding:0}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:"white",borderRadius:"24px 24px 0 0",padding:"24px 22px 30px",width:"100%",maxWidth:480,boxShadow:"0 -8px 40px rgba(0,0,0,0.25)",animation:"sheetUp 0.35s cubic-bezier(0.34,1.4,0.64,1)",maxHeight:"85vh",overflowY:"auto"}}>
+              <div style={{width:44,height:5,borderRadius:99,background:C.line,margin:"0 auto 18px"}}/>
+
+              <div style={{textAlign:"center",marginBottom:18}}>
+                <div style={{fontSize:52,marginBottom:8}}>{V.icon}</div>
+                <div style={{fontSize:22,fontWeight:900,color:V.color}}>{V.label}</div>
+                {V.sub && <div style={{fontSize:13.5,color:C.inkSoft,marginTop:5}}>{V.sub}</div>}
+                {fbModal.grade && (
+                  <div style={{display:"inline-block",marginTop:12,background:gradeColor+"18",color:gradeColor,fontSize:13,fontWeight:800,borderRadius:99,padding:"6px 16px",letterSpacing:"0.03em"}}>
+                    완성도 · {fbModal.grade}
+                  </div>
+                )}
+              </div>
+
+              <div style={{background:V.soft,borderRadius:16,padding:15,marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${V.color},${C.accent})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🧪</div>
+                  <span style={{fontSize:14,fontWeight:800,color:V.color}}>큐리</span>
+                </div>
+                <div style={{fontSize:15,lineHeight:1.75,color:C.ink,whiteSpace:"pre-wrap"}}>{fbModal.greeting}</div>
+              </div>
+
+              {fbModal.good && (
+                <div style={{background:C.goodSoft,borderRadius:14,padding:13,marginBottom:12}}>
+                  <div style={{fontSize:12.5,fontWeight:800,color:C.good,marginBottom:5}}>👍 잘한 점</div>
+                  <div style={{fontSize:14.5,lineHeight:1.65,color:C.ink}}>{fbModal.good}</div>
+                </div>
+              )}
+
+              {fbModal.verdict !== "good" && fbModal.question && (
+                <div style={{background:C.primarySoft,borderRadius:14,padding:13,marginBottom:12}}>
+                  <div style={{fontSize:12.5,fontWeight:800,color:C.primary,marginBottom:6}}>💭 큐리의 질문</div>
+                  <div style={{fontSize:15,lineHeight:1.7,color:C.primaryDark,fontWeight:600}}>{fbModal.question}</div>
+                </div>
+              )}
+
+              <button onClick={()=>setFbModal(null)} style={{width:"100%",padding:15,marginTop:4,background:`linear-gradient(135deg,${V.color},${C.accent})`,color:"white",border:"none",borderRadius:14,fontSize:15.5,fontWeight:800,cursor:"pointer"}}>
+                {fbModal.verdict==="good" ? "좋아, 다음으로! 🚀" : "고치러 가기 ✏️"}
+              </button>
+              <div style={{textAlign:"center",fontSize:11.5,color:C.inkFaint,marginTop:10}}>
+                피드백은 원하는 만큼 더 받을 수 있어 · 다음 단계로 갈지는 네가 결정!
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 토스트 */}
       {toast&&(

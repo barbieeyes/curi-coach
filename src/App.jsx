@@ -110,10 +110,11 @@ async function getFeedback(sec, text, attempt, prevInputs) {
   const context = prevInputs.q
     ? `\n[이전 단계]\n탐구문제: "${prevInputs.q}"${prevInputs.h?`\n가설: "${prevInputs.h}"`:""}` : "";
 
+  const checkList = (sec.checks||[]).map((k,i)=>`${i+1}. ${k}`).join("\n");
   const prompt = `너는 과학 탐구 코치 "큐리(Curi)"야. 마리 퀴리처럼 과학적이고 탐구적이지만 중학생한테 친근하게 말해.
 
 [절대 규칙]
-- 정답 직접 말하기 금지 / 점수·등급 언급 금지 / "틀렸다" 금지
+- 정답 직접 말하기 금지 / "틀렸다" 금지
 - 질문으로만 유도 / 친근한 반말 / 과학 용어는 쉽게
 - 피드백은 1~2가지만
 ${is2nd ? "- 2차: 1차보다 세밀하게, 과학적 표현 정확성 집중" : "- 1차: 방향 잡기, 가장 중요한 1가지만"}
@@ -123,23 +124,39 @@ ${is2nd ? "- 2차: 1차보다 세밀하게, 과학적 표현 정확성 집중" :
 [학생 작성]
 "${text}"
 
-[판정 기준]
-- verdict는 반드시 셋 중 하나: "good"(과학적으로 충분히 잘 씀), "think"(방향은 맞지만 더 생각이 필요), "revise"(수정이 필요)
-- grade는 이 단계 완성도: "Excellent"(아주 훌륭), "Great"(훌륭), "Good"(양호) 중 하나. 부족하면 grade를 생략하거나 "Good"
+[이 단계의 체크 항목]
+${checkList}
+
+[판정 방법 — 매우 중요!]
+1. 위 체크 항목 각각에 대해, 학생 작성이 충족했으면 true, 아니면 false로 판정해. (checks 배열)
+2. 너는 중학생을 격려하는 코치야. 조금이라도 시도한 항목은 관대하게 true로 봐줘.
+3. verdict 결정: 충족한 항목이 하나라도 있으면 "good"(격려하며 통과), 하나도 없으면 "revise". 아주 아깝게 하나가 빠졌으면 "think".
+4. grade는 충족 개수로 자동 결정되니 신경 쓰지 마.
+5. verdict가 "good"이면 question은 빈 문자열, greeting에 칭찬 듬뿍. "think"/"revise"면 question에 유도 질문 1개.
 
 순수 JSON만 응답:
-{"greeting":"2문장 인사·격려","verdict":"good|think|revise","grade":"Excellent|Great|Good","good":"잘한점 1가지","question":"핵심질문 1가지(수정/생각이 필요할 때)","hint":"힌트"}`;
+{"greeting":"2문장 인사·격려","checks":[${(sec.checks||[]).map(()=>"true").join(",")}],"verdict":"good|think|revise","good":"잘한점 1가지","question":"핵심질문(good이면 빈칸)","hint":"힌트"}`;
 
   const raw = await callCuri(prompt);
   const match = raw.match(/\{[\s\S]*\}/);
-  const SAFE = {greeting:"좋아, 잘 하고 있어! 큐리가 한 가지만 물어볼게 🧪",verdict:"think",grade:"Good",good:"스스로 끝까지 써낸 점이 멋져!",question:"이 부분을 조금 더 자세히 설명해줄 수 있어?",hint:""};
-  if(!match) return SAFE;
+  const nChecks = (sec.checks||[]).length;
+  const SAFE = {greeting:"좋아, 잘 하고 있어! 큐리가 한 가지만 물어볼게 🧪",checks:Array(nChecks).fill(true),verdict:"good",good:"스스로 끝까지 써낸 점이 멋져!",question:"",hint:""};
+  const finalize = (obj) => {
+    const r = { ...SAFE, ...obj };
+    // 체크 개수 → 등급 자동 산정
+    const passed = Array.isArray(r.checks) ? r.checks.filter(Boolean).length : nChecks;
+    r.passedCount = passed;
+    r.totalChecks = nChecks;
+    r.grade = passed >= nChecks ? "Excellent" : passed >= Math.ceil(nChecks*0.5) ? "Great" : passed>=1 ? "Good" : "Good";
+    r.checkItems = (sec.checks||[]).map((label,i)=>({label, ok: Array.isArray(r.checks)? !!r.checks[i] : true}));
+    return r;
+  };
+  if(!match) return finalize({});
   try {
-    const parsed = JSON.parse(match[0]);
-    return { ...SAFE, ...parsed };
+    return finalize(JSON.parse(match[0]));
   } catch(e){
-    try { return { ...SAFE, ...JSON.parse(match[0].replace(/,\s*([}\]])/g,"$1")) }; }
-    catch(e2){ return SAFE; }
+    try { return finalize(JSON.parse(match[0].replace(/,\s*([}\]])/g,"$1"))); }
+    catch(e2){ return finalize({}); }
   }
 }
 
@@ -1258,11 +1275,19 @@ export default function App() {
                   </div>
                 </div>
                 {/* 자주 쓰는 단위 빠른 선택 */}
-                <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
-                  <span style={{fontSize:11,color:C.inkFaint,alignSelf:"center"}}>빠른 단위:</span>
-                  {["℃","초","분","cm","mm","g","mL","개","회","%"].map(u=>(
-                    <button key={u} onClick={()=>setTableData(p=>({...p,yUnit:u}))} style={{fontSize:11.5,fontWeight:600,padding:"4px 9px",borderRadius:99,border:`1px solid ${C.line}`,background:tableData.yUnit===u?SEC_TONE.r.soft:C.surface,color:tableData.yUnit===u?SEC_TONE.r.main:C.inkSoft,cursor:"pointer"}}>{u}</button>
-                  ))}
+                <div style={{marginBottom:10}}>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6,alignItems:"center"}}>
+                    <span style={{fontSize:11,color:C.inkFaint,minWidth:52}}>가로축 단위:</span>
+                    {["℃","초","분","cm","g","mL","개","회","%"].map(u=>(
+                      <button key={u} onClick={()=>setTableData(p=>({...p,xUnit:u}))} style={{fontSize:11.5,fontWeight:600,padding:"4px 9px",borderRadius:99,border:`1px solid ${C.line}`,background:tableData.xUnit===u?SEC_TONE.r.soft:C.surface,color:tableData.xUnit===u?SEC_TONE.r.main:C.inkSoft,cursor:"pointer"}}>{u}</button>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                    <span style={{fontSize:11,color:C.inkFaint,minWidth:52}}>세로축 단위:</span>
+                    {["℃","초","분","cm","g","mL","개","회","%"].map(u=>(
+                      <button key={u} onClick={()=>setTableData(p=>({...p,yUnit:u}))} style={{fontSize:11.5,fontWeight:600,padding:"4px 9px",borderRadius:99,border:`1px solid ${C.line}`,background:tableData.yUnit===u?SEC_TONE.r.soft:C.surface,color:tableData.yUnit===u?SEC_TONE.r.main:C.inkSoft,cursor:"pointer"}}>{u}</button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* 표 */}
@@ -1274,10 +1299,10 @@ export default function App() {
                   </div>
                   {tableData.rows.map((row,ri)=>(
                     <div key={ri} style={{display:"flex",gap:8,marginBottom:7,alignItems:"center"}}>
-                      <input value={row.x} placeholder="예: 1일차"
+                      <input value={row.x} placeholder=""
                         onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],x:e.target.value};setTableData(p=>({...p,rows}));}}
                         style={{flex:1,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
-                      <input value={row.y} placeholder="숫자" inputMode="decimal"
+                      <input value={row.y} placeholder="" inputMode="decimal"
                         onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],y:e.target.value};setTableData(p=>({...p,rows}));}}
                         style={{flex:1,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
                       <button onClick={()=>{ if(tableData.rows.length>1){const rows=tableData.rows.filter((_,i)=>i!==ri);setTableData(p=>({...p,rows}));} }}
@@ -2049,14 +2074,18 @@ export default function App() {
       {/* ══ 피드백 판정 팝업 ══ */}
       {fbModal && (() => {
         const V = {
-          good:  {icon:"🎉", label:"아주 좋아!",      color:C.good,  soft:C.goodSoft,  sub:"과학적으로 충분히 잘 썼어!"},
-          think: {icon:"🤔", label:"조금 더 생각해볼까?", color:C.warn,  soft:C.warnSoft,  sub:"방향은 좋아! 한 걸음만 더 가보자"},
-          revise:{icon:"✏️", label:"같이 고쳐보자!",    color:C.coral, soft:C.coralSoft, sub:"큐리의 질문을 보고 다듬어봐"}
+          good:  {icon:"🎉", label:"정말 잘했어!",      color:C.good,  soft:C.goodSoft,  sub:"핵심을 제대로 잡았어! 이대로 넘어가자 👏"},
+          think: {icon:"💡", label:"거의 다 왔어!",      color:C.warn,  soft:C.warnSoft,  sub:"하나만 더 챙기면 완벽해져!"},
+          revise:{icon:"✏️", label:"같이 다듬어보자!",    color:C.coral, soft:C.coralSoft, sub:"큐리 질문 보면서 조금만 고쳐볼까?"}
         }[fbModal.verdict] || {icon:"🧪",label:"큐리의 피드백",color:C.primary,soft:C.primarySoft,sub:""};
         const gradeColor = {Excellent:"#E0654E",Great:"#E8912D",Good:"#2BA89A"}[fbModal.grade] || C.primary;
         return (
           <div onClick={()=>setFbModal(null)} style={{position:"fixed",inset:0,zIndex:400,background:"rgba(30,25,60,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",padding:0}}>
-            <div onClick={e=>e.stopPropagation()} style={{background:"white",borderRadius:"24px 24px 0 0",padding:"24px 22px 30px",width:"100%",maxWidth:480,boxShadow:"0 -8px 40px rgba(0,0,0,0.25)",animation:"sheetUp 0.35s cubic-bezier(0.34,1.4,0.64,1)",maxHeight:"85vh",overflowY:"auto"}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:"white",borderRadius:"24px 24px 0 0",padding:"24px 22px 30px",width:"100%",maxWidth:480,boxShadow:"0 -8px 40px rgba(0,0,0,0.25)",animation:"sheetUp 0.35s cubic-bezier(0.34,1.4,0.64,1)",maxHeight:"85vh",overflowY:"auto",position:"relative",overflowX:"hidden"}}>
+              {fbModal.verdict==="good" && Array.from({length:18}).map((_,i)=>{
+                const cols=["#FFD166","#EF476F","#06D6A0","#6D5BD0","#FFB4A2"];
+                return <div key={i} style={{position:"absolute",top:-10,left:`${(i*23+7)%100}%`,width:8,height:11,background:cols[i%cols.length],borderRadius:2,animation:`confetti ${1.8+(i%4)*0.3}s ${(i%6)*0.1}s ease-in forwards`,pointerEvents:"none"}}/>;
+              })}
               <div style={{width:44,height:5,borderRadius:99,background:C.line,margin:"0 auto 18px"}}/>
 
               <div style={{textAlign:"center",marginBottom:18}}>
@@ -2065,10 +2094,33 @@ export default function App() {
                 {V.sub && <div style={{fontSize:13.5,color:C.inkSoft,marginTop:5}}>{V.sub}</div>}
                 {fbModal.grade && (
                   <div style={{display:"inline-block",marginTop:12,background:gradeColor+"18",color:gradeColor,fontSize:13,fontWeight:800,borderRadius:99,padding:"6px 16px",letterSpacing:"0.03em"}}>
-                    완성도 · {fbModal.grade}
+                    완성도 · {fbModal.grade} {fbModal.totalChecks?`(${fbModal.passedCount}/${fbModal.totalChecks})`:""}
                   </div>
                 )}
               </div>
+
+              {/* 체크 항목별 충족 여부 — 왜 이 등급인지 */}
+              {fbModal.checkItems && fbModal.checkItems.length>0 && (
+                <div style={{background:C.bg,borderRadius:14,padding:"13px 15px",marginBottom:12}}>
+                  <div style={{fontSize:12,fontWeight:800,color:C.inkSoft,marginBottom:9}}>📋 이 단계 체크포인트</div>
+                  {fbModal.checkItems.map((it,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:i<fbModal.checkItems.length-1?7:0}}>
+                      <span style={{fontSize:15,flexShrink:0,lineHeight:1.4}}>{it.ok?"✅":"⬜"}</span>
+                      <span style={{fontSize:13.5,lineHeight:1.5,color:it.ok?C.ink:C.inkFaint,fontWeight:it.ok?600:400}}>{it.label}</span>
+                    </div>
+                  ))}
+                  {fbModal.passedCount < fbModal.totalChecks && (
+                    <div style={{fontSize:12,color:C.accent,marginTop:9,fontWeight:700,lineHeight:1.5}}>
+                      💡 남은 항목까지 채우면 Excellent! (지금도 충분히 잘했어)
+                    </div>
+                  )}
+                  {fbModal.passedCount >= fbModal.totalChecks && fbModal.totalChecks>0 && (
+                    <div style={{fontSize:12,color:C.good,marginTop:9,fontWeight:700}}>
+                      🌟 모든 체크포인트 완성! 완벽해!
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div style={{background:V.soft,borderRadius:16,padding:15,marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>

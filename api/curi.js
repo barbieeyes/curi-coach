@@ -1,39 +1,20 @@
 export const config = {
-  runtime: "edge"
+  maxDuration: 60
 };
 
-export default async function handler(request) {
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST 요청만 허용됩니다" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" }
-    });
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "POST 요청만 허용됩니다" });
   }
 
-  let prompt;
-  try {
-    const body = await request.json();
-    prompt = body.prompt;
-  } catch (e) {
-    return new Response(JSON.stringify({ error: "요청 본문을 읽을 수 없습니다" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
+  const { prompt } = req.body || {};
   if (!prompt || typeof prompt !== "string") {
-    return new Response(JSON.stringify({ error: "prompt가 필요합니다" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" }
-    });
+    return res.status(400).json({ error: "prompt가 필요합니다" });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "서버에 API 키가 설정되지 않았습니다" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    return res.status(500).json({ error: "서버에 API 키가 설정되지 않았습니다" });
   }
 
   try {
@@ -53,10 +34,7 @@ export default async function handler(request) {
 
     if (!response.ok) {
       const errText = await response.text();
-      return new Response(JSON.stringify({ error: `Anthropic API 오류: ${errText.slice(0,300)}` }), {
-        status: response.status,
-        headers: { "Content-Type": "application/json" }
-      });
+      return res.status(response.status).json({ error: "Anthropic API 오류: " + errText.slice(0, 300) });
     }
 
     const data = await response.json();
@@ -65,14 +43,8 @@ export default async function handler(request) {
       .map(b => b.text)
       .join("");
 
-    return new Response(JSON.stringify({ text }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return res.status(200).json({ text });
   } catch (e) {
-    return new Response(JSON.stringify({ error: `서버 오류: ${e.message}` }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    return res.status(500).json({ error: "서버 오류: " + e.message });
   }
 }

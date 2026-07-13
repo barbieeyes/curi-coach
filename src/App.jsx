@@ -424,9 +424,9 @@ function Onboarding({ student, setStudent, onStart }) {
     if(greetedRef.current) return;
     greetedRef.current = true;
     curiSay([
-      "안녕! 나는 과학 탐구 코치 큐리(Curi)야 🧪",
+      "안녕! 나는 송례중학교 친구들의 탐구를 돕기 위해 온 큐리(Curi)야 🧪",
       "내 이름은 Curiosity, '호기심'에서 왔어! 과학은 호기심에서 시작되거든 ✨",
-      "정답을 알려주는 게 아니라, 대화하면서 너의 탐구를 도와줄 거야!",
+      "정답을 딱 알려주는 게 아니라, 너랑 대화하면서 탐구를 같이 만들어갈 거야. 우리 이제 탐구 친구인 거지! 😊",
       "먼저 물어볼게 — 이번 탐구, 혼자 하는 거야? 팀으로 하는 거야?"
     ], "mode");
   },[]);

@@ -211,25 +211,42 @@ ${sectionText}
   const r1 = safeParse(await callCuri(p1), { journeyDetail: [] });
 
   // ── 2차 호출: 종합 총평·의사소통 성장 (짧게) ──
-  onProgress && onProgress("전체 성장과 총평을 정리하고 있어요");
-  const p2 = `너는 과학 탐구 코치 "큐리"야. 학생의 전체 탐구 과정을 보고 교사용 총평을 써.
+  onProgress && onProgress("과학적 의사소통 능력을 깊이 살펴보고 있어요");
+  const chatLog = (allData.chatMsgs || []).filter(m=>m.role==="user"||m.role==="assistant").slice(-16)
+    .map(m => `${m.role==="user"?"학생":"큐리"}: ${cut(m.text,120)}`).join("\n") || "(챗봇 대화 없음)";
+  const p2 = `너는 과학 탐구 코치 "큐리"야. 학생의 전체 탐구 과정을 보고 교사용 총평을 써. 특히 **과학적 의사소통 능력**과 **AI와의 상호작용**을 가장 중점적으로, 깊이 있게 분석해.
 
 ${sectionText}
 
-[소통] 챗봇 질문 ${allData.chatQuestionCount}회 · 총 수정 ${allData.totalAttempts}회
+[학생이 챗봇 큐리와 나눈 대화]
+${chatLog}
+
+[소통 지표] 챗봇 질문 ${allData.chatQuestionCount}회 · 총 수정 ${allData.totalAttempts}회
+
+[과학적 의사소통 능력이란]
+- 자기 생각을 과학적 용어와 논리로 정확하게 표현하는 능력
+- 큐리의 질문·피드백을 이해하고 자기 글에 반영해 수정하는 능력
+- 근거를 들어 주장하고, 변인·인과관계를 명확한 언어로 설명하는 능력
+- 회차를 거치며 표현이 얼마나 구체적·정확·논리적으로 발전했는지
+
+이 부분을 회차별 작성 내용의 '실제 표현 변화'를 근거로 구체적으로 분석해. 초기엔 어떻게 썼고 최종엔 어떻게 바뀌었는지 실제 표현을 인용하듯 짚어줘.
 
 순수 JSON만: {
 "overallSummary":"전체 과정 2-3문장 총평, 따뜻하고 구체적으로",
 "strengths":["강점1(근거)","강점2"],
-"communicationGrowth":"과학적 의사소통 능력(생각을 과학용어로 표현하고 질문받아 수정하는 능력)이 어떻게 향상됐는지 2-3문장, 초기와 최종 표현 변화 근거로",
+"communicationGrowth":"과학적 의사소통 능력의 전반적 향상을 3-4문장으로. 초기 표현 → 최종 표현의 실제 변화를 근거로 구체적으로",
+"commDetail":[{"aspect":"표현의 정확성","evidence":"어떤 단계에서 어떤 용어·표현이 어떻게 정확해졌는지 실제 근거"},{"aspect":"피드백 반영력","evidence":"큐리 질문을 받고 어떻게 자기 글을 고쳤는지 실제 근거"},{"aspect":"논리적 설명력","evidence":"근거를 들어 설명하거나 인과관계를 표현한 부분의 발전"}],
+"commLevel":"이 학생의 과학적 의사소통 능력 수준을 '무럭무럭 자라는 중/한 뼘 성장/큰 도약' 중 하나로 격려하듯",
+"aiInteraction":{"amount":"이 학생이 AI와 얼마나 소통했는지 한 줄 (질문·수정 횟수 근거로, 예: '적극적으로 여러 번 도움을 요청함')","naturalness":"AI에게 얼마나 자연스럽게 도움을 요청했는지, 어떤 식으로 질문했는지 1-2문장","difficulty":"주로 어느 단계·어떤 부분에서 어려움을 겪고 도움을 받았는지 1-2문장","improvement":"AI 도움을 받아 실제로 어떻게 개선됐는지 1-2문장","effect":"AI 코칭이 이 학생에게 어떤 교육적 효과가 있었는지 1-2문장"},
 "improvements":["회차 거치며 개선된 점1","개선점2"],
 "curiosityLevel":"상|중|하",
 "scientificThinkingNote":"과학적 사고(변인통제·측정가능성·논리적 결론) 1-2문장",
-"suggestionForTeacher":"지도 참고 코멘트 1-2문장"}`;
+"suggestionForTeacher":"지도 참고 코멘트 1-2문장. 의사소통 능력을 더 키워주려면 어떤 점을 지도하면 좋을지 포함"}`;
   const SAFE2 = {
     overallSummary: "탐구 과정을 끝까지 잘 완성했어요.",
-    strengths: [], communicationGrowth: "", improvements: [],
-    curiosityLevel: "-", scientificThinkingNote: "", suggestionForTeacher: ""
+    strengths: [], communicationGrowth: "", commDetail: [], commLevel: "",
+    aiInteraction: null,
+    improvements: [], curiosityLevel: "-", scientificThinkingNote: "", suggestionForTeacher: ""
   };
   const r2 = safeParse(await callCuri(p2), SAFE2);
 
@@ -809,7 +826,7 @@ export default function App() {
     setView("finalReport");
     try {
       const totalAttempts = Object.values(attempts).reduce((a,b)=>a+b,0);
-      const report = await getFinalReport({ fbs, inputHistory, chatQuestionCount:chatQCount, totalAttempts }, (msg)=>setReportProgress(msg));
+      const report = await getFinalReport({ fbs, inputHistory, chatQuestionCount:chatQCount, totalAttempts, chatMsgs }, (msg)=>setReportProgress(msg));
       setFinalReport(report);
     } catch(e){
       setFinalReport({ error: e.message });
@@ -837,10 +854,13 @@ export default function App() {
         chatCount: chatQCount,
         photos: photos.map(p=>({ dataUrl: p.dataUrl, caption: p.caption }))
       };
-      const res = await fetch(SUBMIT_URL, { method:"POST", body: JSON.stringify(payload) });
-      let out = { ok: true };
-      try { out = await res.json(); } catch(_) {}
-      if(out.ok === false) throw new Error(out.error || "제출 실패");
+      await fetch(SUBMIT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+      // no-cors는 응답을 읽을 수 없지만, Apps Script는 정상 수신함
       setSubmitted(true);
       toast_("선생님께 제출 완료! 🎉");
     } catch(e){
@@ -906,6 +926,16 @@ export default function App() {
         <tr>${summaryRow}</tr>
       </table>
       ${blocks}
+      ${chatMsgs.filter(m=>m.role==="user"||m.role==="assistant").length>0 ? `
+      <div style="margin-top:16px;page-break-inside:avoid;">
+        <div style="font-size:14px;font-weight:800;color:#5847B8;margin-bottom:6px;">💬 큐리 챗봇과 나눈 대화 전체</div>
+        <div style="border:1px solid #e5e5ee;border-radius:8px;padding:4px;">
+        ${chatMsgs.filter(m=>m.role==="user"||m.role==="assistant").map(m=>{
+          const isMe = m.role==="user";
+          return `<div style="margin:5px;padding:8px 11px;border-radius:8px;font-size:11.5px;line-height:1.55;${isMe?"background:#EEEBFB;margin-left:40px;":"background:#F4F7F6;margin-right:40px;"}"><b style="color:${isMe?"#5847B8":"#2BA89A"};">${isMe?"학생":"큐리"}</b><br/>${esc(m.text)}</div>`;
+        }).join("")}
+        </div>
+      </div>` : ""}
       <div style="margin-top:14px;border-top:1px solid #ddd;padding-top:8px;font-size:10px;color:#999;text-align:center;">
         시도 횟수와 회차별 작성·질문은 앱에 기록된 원본 데이터입니다. ★는 코칭을 가장 많이 받은(머뭇거린) 단계입니다. 최종 평가는 교사가 진행합니다.
       </div>
@@ -957,7 +987,8 @@ export default function App() {
 
       ${journeyHTML?`<div style="font-size:14px;font-weight:800;color:#C07020;margin-bottom:8px;">오류 → 질문 → 수정 → 성장의 기록</div>${journeyHTML}`:""}
 
-      ${r.communicationGrowth?`<div style="font-size:14px;font-weight:800;color:#3FA66B;margin:14px 0 6px;">과학적 의사소통 능력의 향상</div><div style="font-size:12.5px;line-height:1.7;background:#EBF8F0;border-radius:10px;padding:11px 14px;margin-bottom:14px;">${esc(r.communicationGrowth)}</div>`:""}
+      ${r.communicationGrowth?`<div style="font-size:14px;font-weight:800;color:#3FA66B;margin:14px 0 6px;">과학적 의사소통 능력의 향상 ${r.commLevel?`<span style="font-size:11px;background:#3FA66B;color:white;border-radius:99px;padding:2px 10px;">${esc(r.commLevel)}</span>`:""}</div><div style="font-size:12.5px;line-height:1.7;background:#EBF8F0;border-radius:10px;padding:11px 14px;margin-bottom:8px;">${esc(r.communicationGrowth)}</div>${(r.commDetail||[]).map(d=>`<div style="font-size:12px;line-height:1.6;margin-bottom:5px;padding-left:10px;border-left:3px solid #3FA66B;"><b>${esc(d.aspect)}</b> · ${esc(d.evidence)}</div>`).join("")}`:""}
+      ${r.aiInteraction?`<div style="font-size:14px;font-weight:800;color:#5847B8;margin:14px 0 6px;">AI 코치와의 상호작용</div><div style="background:#F4F2FB;border-radius:10px;padding:11px 14px;margin-bottom:14px;">${[["소통량",r.aiInteraction.amount],["도움 요청 방식",r.aiInteraction.naturalness],["어려움을 겪은 지점",r.aiInteraction.difficulty],["도움받아 개선된 점",r.aiInteraction.improvement],["교육적 효과",r.aiInteraction.effect]].filter(x=>x[1]).map(x=>`<div style="font-size:12px;line-height:1.6;margin-bottom:4px;"><b style="color:#5847B8;">${x[0]}</b> · ${esc(x[1])}</div>`).join("")}</div>`:""}
 
       ${(r.improvements||[]).length?`<div style="font-size:14px;font-weight:800;color:#6D5BD0;margin-bottom:6px;">회차별 개선</div><ul style="margin:0 0 14px 18px;padding:0;">${listHTML(r.improvements)}</ul>`:""}
 
@@ -1077,10 +1108,19 @@ export default function App() {
   }
 
   return (
-    <div style={{fontFamily:"'Jua','Pretendard',-apple-system,system-ui,sans-serif",background:C.bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",color:C.ink,display:"flex",flexDirection:"column",letterSpacing:"-0.01em",position:"relative"}}>
+    <div style={{fontFamily:"'Jua','Pretendard',-apple-system,system-ui,sans-serif",background:"linear-gradient(170deg,#5B4BC4 0%,#6D5BD0 28%,#4E7DC4 55%,#3E9E96 82%,#2BA89A 100%)",backgroundAttachment:"fixed",minHeight:"100vh",maxWidth:480,margin:"0 auto",color:C.ink,display:"flex",flexDirection:"column",letterSpacing:"-0.01em",position:"relative"}}>
+
+      {/* 떠다니는 배경 이모지 */}
+      <div style={{position:"fixed",inset:0,maxWidth:480,margin:"0 auto",overflow:"hidden",pointerEvents:"none",zIndex:0}}>
+        {["🧪","🔬","⚗️","🌡️","✨","💡","📊","🧬","🔭","⚡","🌟","🪐"].map((f,i)=>(
+          <div key={i} style={{position:"absolute",left:`${(i*8.3+4)%92}%`,bottom:"-40px",fontSize:18+(i%3)*8,opacity:0.5,animation:`floatUp ${9+(i%5)*2}s ${i*0.8}s linear infinite`}}>{f}</div>
+        ))}
+      </div>
+
+
 
       {/* ── 헤더 ── */}
-      <div style={{position:"sticky",top:0,zIndex:99,background:C.surface,borderBottom:`1px solid ${C.line}`,padding:"14px 16px 12px"}}>
+      <div style={{position:"sticky",top:0,zIndex:99,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderBottom:"1px solid rgba(255,255,255,0.3)",padding:"14px 16px 12px"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
           <div style={{width:34,height:34,borderRadius:11,background:`linear-gradient(135deg,${C.primary},${C.accent})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18.5,flexShrink:0,boxShadow:`0 2px 8px ${C.primary}35`}}>🧪</div>
           <div style={{flex:1,minWidth:0}}>
@@ -1103,7 +1143,7 @@ export default function App() {
       </div>
 
       {/* ── 뷰 탭 ── */}
-      <div style={{display:"flex",background:C.surface,borderBottom:`1px solid ${C.line}`,padding:"0 10px"}}>
+      <div style={{display:"flex",background:"rgba(255,255,255,0.82)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)",borderBottom:`1px solid ${C.line}`,padding:"0 10px",position:"relative",zIndex:1}}>
         {[
           ["report","탐구 보고서"],
           ...(allDone ? [["finalReport","종합 리포트"]] : [])
@@ -1122,10 +1162,10 @@ export default function App() {
 
       {/* ══════════ 탐구보고서 뷰 ══════════ */}
       {view==="report" && (
-        <div style={{flex:1,overflowY:"auto"}}>
+        <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1}}>
 
           {/* 섹션 탭 */}
-          <div style={{display:"flex",gap:6,overflowX:"auto",padding:"12px 14px",background:C.surface,borderBottom:`1px solid ${C.line}`,scrollbarWidth:"none"}}>
+          <div style={{display:"flex",gap:6,overflowX:"auto",padding:"12px 14px",background:"transparent",scrollbarWidth:"none"}}>
             {SECTIONS.map((s,i)=>{
               const isDone=done[s.id], isAct=i===idx;
               const locked=i>0 && attempts[SECTIONS[i-1].id] < MIN_FEEDBACK && !isDone && i!==idx;
@@ -1133,9 +1173,9 @@ export default function App() {
                 <div key={s.id} onClick={()=>go(i)} style={{
                   flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:4,
                   padding:"9px 13px",borderRadius:13,
-                  border:`2px solid ${isDone?C.good:isAct?SEC_TONE[s.id].main:C.line}`,
-                  background:isDone?C.goodSoft:isAct?SEC_TONE[s.id].soft:C.surface,
-                  cursor:"pointer",opacity:locked?0.6:1,minWidth:66,
+                  border:`2px solid ${isDone?C.good:isAct?SEC_TONE[s.id].main:"transparent"}`,
+                  background:isDone?C.goodSoft:isAct?"white":"rgba(255,255,255,0.55)",
+                  cursor:"pointer",opacity:locked?0.55:1,minWidth:66,
                   transition:"all 0.15s",position:"relative"
                 }}>
                   <span style={{fontSize:20}}>{s.icon}</span>
@@ -1169,7 +1209,7 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{padding:"14px 14px 110px"}}>
+          <div style={{background:C.bg,borderRadius:"20px 20px 0 0",padding:"18px 14px 110px",minHeight:"70vh",boxShadow:"0 -4px 20px rgba(0,0,0,0.1)"}}>
 
             {/* 큐리 인트로 카드 */}
             <div style={{
@@ -1238,6 +1278,7 @@ export default function App() {
             )}
 
             <div style={{pointerEvents:secLocked?"none":"auto",opacity:secLocked?0.5:1,transition:"opacity 0.2s"}}>
+
 
             {/* 입력 카드 — 결과 섹션 (표 입력 + 꺾은선그래프) */}
             {sec.id==="r" && (
@@ -1820,7 +1861,8 @@ export default function App() {
 
       {/* ══════════ 종합 리포트 뷰 ══════════ */}
       {view==="finalReport" && (
-        <div style={{flex:1,overflowY:"auto",padding:"20px 16px 60px"}}>
+        <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1}}>
+          <div style={{background:C.bg,borderRadius:"20px 20px 0 0",padding:"22px 16px 60px",minHeight:"85vh",marginTop:8,boxShadow:"0 -4px 20px rgba(0,0,0,0.1)"}}>
 
           {reportLoading && (
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"70px 20px",gap:14}}>
@@ -1957,11 +1999,40 @@ export default function App() {
                 </div>
               )}
 
-              {/* 과학적 의사소통 능력 향상 */}
+              {/* 과학적 의사소통 능력 — 핵심 분석 */}
               {finalReport.communicationGrowth && (
-                <div style={{background:`linear-gradient(135deg,${C.goodSoft},${C.accentSoft})`,borderRadius:16,padding:16,marginBottom:14,border:`1px solid ${C.good}25`}}>
-                  <div style={{fontSize:13,fontWeight:700,color:C.good,marginBottom:8}}>📈 과학적 의사소통 능력의 향상</div>
-                  <div style={{fontSize:14.5,lineHeight:1.75,color:C.ink}}>{finalReport.communicationGrowth}</div>
+                <div style={{background:`linear-gradient(135deg,${C.goodSoft},${C.accentSoft})`,borderRadius:16,padding:17,marginBottom:14,border:`1.5px solid ${C.good}30`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+                    <div style={{fontSize:13.5,fontWeight:800,color:C.good}}>📈 과학적 의사소통 능력</div>
+                    {finalReport.commLevel && <div style={{fontSize:11,fontWeight:700,color:"white",background:C.good,borderRadius:99,padding:"3px 11px"}}>{finalReport.commLevel}</div>}
+                  </div>
+                  <div style={{fontSize:14,lineHeight:1.8,color:C.ink,marginBottom:finalReport.commDetail?.length?13:0}}>{finalReport.communicationGrowth}</div>
+
+                  {finalReport.commDetail?.length>0 && finalReport.commDetail.map((d,i)=>(
+                    <div key={i} style={{background:"white",borderRadius:11,padding:"11px 13px",marginBottom:i<finalReport.commDetail.length-1?8:0}}>
+                      <div style={{fontSize:12,fontWeight:800,color:C.good,marginBottom:4}}>{["🎯","🔄","🧩"][i]||"✔"} {d.aspect}</div>
+                      <div style={{fontSize:13,lineHeight:1.65,color:C.ink}}>{d.evidence}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 🤖 AI와의 상호작용 분석 */}
+              {finalReport.aiInteraction && (
+                <div style={{background:C.primarySoft,borderRadius:16,padding:17,marginBottom:14,border:`1.5px solid ${C.primary}25`}}>
+                  <div style={{fontSize:13.5,fontWeight:800,color:C.primaryDark,marginBottom:12}}>🤖 AI 코치와의 상호작용</div>
+                  {[
+                    ["💬","소통량",finalReport.aiInteraction.amount],
+                    ["🙋","도움 요청 방식",finalReport.aiInteraction.naturalness],
+                    ["🧗","어려움을 겪은 지점",finalReport.aiInteraction.difficulty],
+                    ["📈","도움받아 개선된 점",finalReport.aiInteraction.improvement],
+                    ["✨","교육적 효과",finalReport.aiInteraction.effect]
+                  ].filter(([,,v])=>v).map(([icon,label,val],i,arr)=>(
+                    <div key={i} style={{background:"white",borderRadius:11,padding:"11px 13px",marginBottom:i<arr.length-1?8:0}}>
+                      <div style={{fontSize:12,fontWeight:800,color:C.primary,marginBottom:4}}>{icon} {label}</div>
+                      <div style={{fontSize:13,lineHeight:1.65,color:C.ink}}>{val}</div>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -2068,6 +2139,7 @@ export default function App() {
               </button>
             </div>
           )}
+          </div>
         </div>
       )}
 

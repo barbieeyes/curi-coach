@@ -111,36 +111,42 @@ async function getFeedback(sec, text, attempt, prevInputs) {
     ? `\n[이전 단계]\n탐구문제: "${prevInputs.q}"${prevInputs.h?`\n가설: "${prevInputs.h}"`:""}` : "";
 
   const checkList = (sec.checks||[]).map((k,i)=>`${i+1}. ${k}`).join("\n");
-  const prompt = `너는 과학 탐구 코치 "큐리(Curi)"야. 마리 퀴리처럼 과학적이고 탐구적이지만 중학생한테 친근하게 말해.
+  const prompt = `너는 과학 탐구 코치 "큐리(Curi)"야. 마리 퀴리처럼 과학적이고 탐구적이지만 중학생한테 친근한 반말로 말해. 너의 피드백은 교사의 연구 자료로도 쓰이니, 격려하는 말투를 유지하되 내용은 과학적으로 깊이 있고 구체적이어야 해.
 
 [절대 규칙]
-- 정답 직접 말하기 금지 / "틀렸다" 금지
-- 질문으로만 유도 / 친근한 반말 / 과학 용어는 쉽게
-- 피드백은 1~2가지만
-${is2nd ? "- 2차: 1차보다 세밀하게, 과학적 표현 정확성 집중" : "- 1차: 방향 잡기, 가장 중요한 1가지만"}
+- 정답을 직접 대신 써주지 마. 질문으로 학생이 스스로 생각하게 유도해.
+- "틀렸다"는 표현 금지. 대신 "이렇게 보면 어떨까?"처럼.
+- 친근한 반말, 과학 용어는 쉽게 풀어서.
+${is2nd ? "- 지금은 2차 이상 피드백이야. 1차보다 더 세밀하게, 과학적 표현의 정확성과 논리적 완결성에 집중해." : "- 지금은 1차 피드백이야. 가장 중요한 핵심을 먼저 짚어줘."}
 
-[섹션] ${sec.guide}${context}
+[섹션 안내] ${sec.guide}${context}
 
-[학생 작성]
+[학생이 작성한 내용]
 "${text}"
 
 [이 단계의 체크 항목]
 ${checkList}
 
-[판정 방법 — 매우 중요!]
-1. 위 체크 항목 각각에 대해, 학생 작성이 충족했으면 true, 아니면 false로 판정해. (checks 배열)
-2. 너는 중학생을 격려하는 코치야. 조금이라도 시도한 항목은 관대하게 true로 봐줘.
-3. verdict 결정: 충족한 항목이 하나라도 있으면 "good"(격려하며 통과), 하나도 없으면 "revise". 아주 아깝게 하나가 빠졌으면 "think".
-4. grade는 충족 개수로 자동 결정되니 신경 쓰지 마.
-5. verdict가 "good"이면 question은 빈 문자열, greeting에 칭찬 듬뿍. "think"/"revise"면 question에 유도 질문 1개.
+[피드백 작성 지침 — 논문 자료급으로 충실하게]
+- greeting: 학생 작성 내용을 실제로 언급하며 구체적으로 격려해 (2-3문장). 두루뭉술한 칭찬 금지, 뭘 잘했는지 콕 집어서.
+- good: 이 작성에서 과학적으로 의미 있는 점을 근거와 함께 짚어줘 (변인 설정, 측정 가능성, 논리 전개 등 어떤 과학적 요소가 좋았는지).
+- question: (good이 아닐 때) 학생이 다음 단계로 사고를 확장하도록 이끄는 핵심 질문. 관련 과학 개념으로 자연스럽게 연결되게. 막막해하지 않도록 구체적인 방향을 담아.
+- hint: 질문만으로 막힐 경우를 위한 힌트. 답은 주지 말되, 생각의 실마리(예시 방향, 고려할 요소)를 제시.
+- deepDive: 이 학생이 한 단계 더 깊이 탐구하면 좋을 지점을 1가지 (과학적 사고를 심화하는 발전 질문). 격려하는 톤으로.
+
+[판정 방법]
+1. 체크 항목 각각을 충족했으면 true, 아니면 false (checks 배열).
+2. 중학생을 격려하는 코치니까, 조금이라도 시도한 항목은 관대하게 true로.
+3. verdict: 충족 항목이 하나라도 있으면 "good"(격려하며 통과), 없으면 "revise", 아깝게 하나 빠지면 "think".
+4. verdict가 "good"이어도 deepDive에는 항상 발전 질문을 담아 (통과해도 더 깊이 갈 여지를 주기 위해).
 
 순수 JSON만 응답:
-{"greeting":"2문장 인사·격려","checks":[${(sec.checks||[]).map(()=>"true").join(",")}],"verdict":"good|think|revise","good":"잘한점 1가지","question":"핵심질문(good이면 빈칸)","hint":"힌트"}`;
+{"greeting":"구체적 격려 2-3문장","checks":[${(sec.checks||[]).map(()=>"true").join(",")}],"verdict":"good|think|revise","good":"과학적으로 잘한 점(근거 포함)","question":"사고 확장 핵심 질문(good이면 빈칸)","hint":"생각의 실마리","deepDive":"한 단계 더 깊이 갈 발전 질문"}`;
 
   const raw = await callCuri(prompt);
   const match = raw.match(/\{[\s\S]*\}/);
   const nChecks = (sec.checks||[]).length;
-  const SAFE = {greeting:"좋아, 잘 하고 있어! 큐리가 한 가지만 물어볼게 🧪",checks:Array(nChecks).fill(true),verdict:"good",good:"스스로 끝까지 써낸 점이 멋져!",question:"",hint:""};
+  const SAFE = {greeting:"좋아, 잘 하고 있어! 큐리가 한 가지만 물어볼게 🧪",checks:Array(nChecks).fill(true),verdict:"good",good:"스스로 끝까지 써낸 점이 멋져!",question:"",hint:"",deepDive:""};
   const finalize = (obj) => {
     const r = { ...SAFE, ...obj };
     // 체크 개수 → 등급 자동 산정
@@ -193,21 +199,32 @@ async function getFinalReport(allData, onProgress) {
   const sectionText = SECTIONS.map(s => {
     const fbs = (allData.fbs[s.id] || []).slice(0, 8);
     const inputs = allData.inputHistory[s.id] || [];
-    if (fbs.length === 0) return `[${s.name}] 기록 없음`;
+    if (inputs.length === 0 && fbs.length === 0) return `[${s.name}] 작성 기록 없음`;
+    const first = cut(inputs[0], 200);
+    const last = inputs.length > 1 ? cut(inputs[inputs.length-1], 200) : "";
     const chain = fbs.map((f, i) =>
-      `  ${i+1}차 작성: "${cut(inputs[i], 160) || "(비어있음)"}"\n  → 큐리 질문: "${cut(f.question || f.good, 130) || "(없음)"}"`
+      `  ${i+1}차: 학생="${cut(inputs[i], 140) || "(비어있음)"}" → 큐리질문="${cut(f.question || f.good, 110) || "(없음)"}"`
     ).join("\n");
-    return `[${s.name}] 총 ${fbs.length}회 시도\n${chain}`;
+    let block = `[${s.name}] 총 ${Math.max(inputs.length, fbs.length)}회 시도`;
+    block += `\n  ▶ 첫 작성: "${first || "(없음)"}"`;
+    if(last) block += `\n  ▶ 최종 작성: "${last}"`;
+    if(chain) block += `\n  [회차별 상세]\n${chain}`;
+    return block;
   }).join("\n\n");
 
-  // ── 1차 호출: 단계별 오류→질문→수정→성장 (짧게) ──
-  onProgress && onProgress("단계별 수정 과정을 분석하고 있어요");
-  const p1 = `너는 과학 탐구 코치 "큐리"야. 학생의 회차별 작성과 큐리 질문을 보고, 실제로 오류→수정이 일어난 단계만 분석해.
+  // ── 1차 호출: 단계별 회차 변화 추적 (오류→수정→성장) ──
+  onProgress && onProgress("회차별 작성 변화를 추적하고 있어요");
+  const p1 = `너는 과학 탐구 코치이자 교육 연구자 "큐리"야. 학생의 회차별 작성 변화를 추적해서, 이 학생이 각 단계에서 어떻게 사고와 표현을 발전시켰는지 분석해. 이건 교사의 연구 자료로 쓰여.
 
 ${sectionText}
 
-순수 JSON만: {"journeyDetail":[{"stage":"단계명","mistake":"처음 작성의 오류·부족함(실제 근거)","curiQuestion":"큐리 핵심 질문","revision":"다음 차수에서 실제로 고친 내용","growth":"드러난 성장 1문장"}]}
-* 오류→수정이 있었던 단계만 1~4개. 지어내지 마.`;
+[분석 지침]
+- 각 단계에서 '1차 작성'과 '마지막 작성'을 실제로 비교해. 표현이 어떻게 구체적·정확·논리적으로 변했는지 실제 문구를 근거로 짚어.
+- 학생이 짧게 썼더라도, 그 안에서 일어난 미묘한 변화(단어 선택, 논리 추가, 변인 명시 등)를 포착해.
+- 변화가 있었던 단계만 골라. 억지로 지어내지 마.
+
+순수 JSON만: {"journeyDetail":[{"stage":"단계명","mistake":"1차 작성에서 부족했던 점(실제 문구 근거)","curiQuestion":"큐리가 던진 핵심 질문","revision":"학생이 실제로 어떻게 고쳤는지(1차→최종 문구 변화를 구체적으로)","growth":"이 변화에서 드러난 과학적 사고·표현의 성장"}]}
+* 1~5개 단계. mistake·revision은 반드시 실제 작성 문구에 근거해서.`;
   const r1 = safeParse(await callCuri(p1), { journeyDetail: [] });
 
   // ── 2차 호출: 종합 총평·의사소통 성장 (짧게) ──
@@ -235,7 +252,7 @@ ${chatLog}
 "overallSummary":"전체 과정 2-3문장 총평, 따뜻하고 구체적으로",
 "strengths":["강점1(근거)","강점2"],
 "communicationGrowth":"과학적 의사소통 능력의 전반적 향상을 3-4문장으로. 초기 표현 → 최종 표현의 실제 변화를 근거로 구체적으로",
-"commDetail":[{"aspect":"표현의 정확성","evidence":"어떤 단계에서 어떤 용어·표현이 어떻게 정확해졌는지 실제 근거"},{"aspect":"피드백 반영력","evidence":"큐리 질문을 받고 어떻게 자기 글을 고쳤는지 실제 근거"},{"aspect":"논리적 설명력","evidence":"근거를 들어 설명하거나 인과관계를 표현한 부분의 발전"}],
+"commDetail":[{"aspect":"표현의 정확성","evidence":"어느 단계에서 '이런 표현'이 '이런 표현'으로 어떻게 정확해졌는지, 실제 학생 문구를 인용해서"},{"aspect":"피드백 반영력","evidence":"큐리의 어떤 질문을 받고 학생이 자기 글을 실제로 어떻게 고쳤는지, 변화 전후를 짚어서"},{"aspect":"논리적 설명력","evidence":"근거를 들어 설명하거나 인과관계·변인관계를 표현한 부분이 회차를 거치며 어떻게 발전했는지"}],
 "commLevel":"이 학생의 과학적 의사소통 능력 수준을 '무럭무럭 자라는 중/한 뼘 성장/큰 도약' 중 하나로 격려하듯",
 "aiInteraction":{"amount":"이 학생이 AI와 얼마나 소통했는지 한 줄 (질문·수정 횟수 근거로, 예: '적극적으로 여러 번 도움을 요청함')","naturalness":"AI에게 얼마나 자연스럽게 도움을 요청했는지, 어떤 식으로 질문했는지 1-2문장","difficulty":"주로 어느 단계·어떤 부분에서 어려움을 겪고 도움을 받았는지 1-2문장","improvement":"AI 도움을 받아 실제로 어떻게 개선됐는지 1-2문장","effect":"AI 코칭이 이 학생에게 어떤 교육적 효과가 있었는지 1-2문장"},
 "improvements":["회차 거치며 개선된 점1","개선점2"],
@@ -1165,23 +1182,23 @@ export default function App() {
         <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1}}>
 
           {/* 섹션 탭 */}
-          <div style={{display:"flex",gap:6,overflowX:"auto",padding:"12px 14px",background:"transparent",scrollbarWidth:"none"}}>
+          <div style={{display:"flex",gap:6,padding:"12px 12px",background:"transparent"}}>
             {SECTIONS.map((s,i)=>{
               const isDone=done[s.id], isAct=i===idx;
               const locked=i>0 && attempts[SECTIONS[i-1].id] < MIN_FEEDBACK && !isDone && i!==idx;
               return (
                 <div key={s.id} onClick={()=>go(i)} style={{
-                  flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:4,
-                  padding:"9px 13px",borderRadius:13,
+                  flex:1,minWidth:0,display:"flex",flexDirection:"column",alignItems:"center",gap:4,
+                  padding:"9px 4px",borderRadius:13,
                   border:`2px solid ${isDone?C.good:isAct?SEC_TONE[s.id].main:"transparent"}`,
                   background:isDone?C.goodSoft:isAct?"white":"rgba(255,255,255,0.55)",
-                  cursor:"pointer",opacity:locked?0.55:1,minWidth:66,
+                  cursor:"pointer",opacity:locked?0.55:1,
                   transition:"all 0.15s",position:"relative"
                 }}>
-                  <span style={{fontSize:20}}>{s.icon}</span>
-                  <span style={{fontSize:12,fontWeight:700,color:isDone?C.good:isAct?SEC_TONE[s.id].main:C.inkSoft}}>{s.name}</span>
-                  <span style={{fontSize:10,lineHeight:1,color:isDone?C.good:locked?C.inkFaint:C.primary,fontWeight:700}}>
-                    {isDone?"✓ 완료":locked?"🔒 보기만":isAct?"작성 중":"이동 가능"}
+                  <span style={{fontSize:19}}>{s.icon}</span>
+                  <span style={{fontSize:11.5,fontWeight:700,color:isDone?C.good:isAct?SEC_TONE[s.id].main:C.inkSoft,whiteSpace:"nowrap"}}>{s.name}</span>
+                  <span style={{fontSize:9,lineHeight:1.2,color:isDone?C.good:locked?C.inkFaint:C.primary,fontWeight:700,whiteSpace:"nowrap"}}>
+                    {isDone?"✓완료":locked?"🔒보기":isAct?"작성중":"이동가능"}
                   </span>
                 </div>
               );
@@ -2213,6 +2230,18 @@ export default function App() {
                 <div style={{background:C.primarySoft,borderRadius:14,padding:13,marginBottom:12}}>
                   <div style={{fontSize:12.5,fontWeight:800,color:C.primary,marginBottom:6}}>💭 큐리의 질문</div>
                   <div style={{fontSize:15,lineHeight:1.7,color:C.primaryDark,fontWeight:600}}>{fbModal.question}</div>
+                  {fbModal.hint && (
+                    <div style={{fontSize:12.5,lineHeight:1.6,color:C.inkSoft,marginTop:8,paddingTop:8,borderTop:`1px dashed ${C.primary}30`}}>
+                      <b style={{color:C.primary}}>💡 실마리 · </b>{fbModal.hint}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {fbModal.deepDive && (
+                <div style={{background:C.accentSoft,borderRadius:14,padding:13,marginBottom:12,border:`1px dashed ${C.accent}50`}}>
+                  <div style={{fontSize:12.5,fontWeight:800,color:C.accent,marginBottom:6}}>🚀 한 걸음 더</div>
+                  <div style={{fontSize:14,lineHeight:1.7,color:C.ink}}>{fbModal.deepDive}</div>
                 </div>
               )}
 

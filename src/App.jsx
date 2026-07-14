@@ -200,10 +200,10 @@ async function getFinalReport(allData, onProgress) {
     const fbs = (allData.fbs[s.id] || []).slice(0, 8);
     const inputs = allData.inputHistory[s.id] || [];
     if (inputs.length === 0 && fbs.length === 0) return `[${s.name}] 작성 기록 없음`;
-    const first = cut(inputs[0], 200);
-    const last = inputs.length > 1 ? cut(inputs[inputs.length-1], 200) : "";
+    const first = cut(inputs[0], 320);
+    const last = inputs.length > 1 ? cut(inputs[inputs.length-1], 320) : "";
     const chain = fbs.map((f, i) =>
-      `  ${i+1}차: 학생="${cut(inputs[i], 140) || "(비어있음)"}" → 큐리질문="${cut(f.question || f.good, 110) || "(없음)"}"`
+      `  ${i+1}차: 학생="${cut(inputs[i], 220) || "(비어있음)"}" → 큐리질문="${cut(f.question || f.good, 160) || "(없음)"}"`
     ).join("\n");
     let block = `[${s.name}] 총 ${Math.max(inputs.length, fbs.length)}회 시도`;
     block += `\n  ▶ 첫 작성: "${first || "(없음)"}"`;
@@ -314,8 +314,9 @@ function compressImage(file) {
 }
 
 function LineChart({ data }) {
+  const compare = !!data.compare;
   const pts = data.rows
-    .map(r => ({ x: r.x, y: parseFloat(r.y) }))
+    .map(r => ({ x: r.x, y: parseFloat(r.y), y2: parseFloat(r.y2) }))
     .filter(p => p.x && !isNaN(p.y));
 
   if (pts.length < 2) {
@@ -326,9 +327,10 @@ function LineChart({ data }) {
     );
   }
 
-  const W = 300, H = 180, padL = 38, padR = 14, padT = 16, padB = 34;
-  const ys = pts.map(p => p.y);
-  let minY = Math.min(...ys), maxY = Math.max(...ys);
+  const has2 = compare && pts.some(p=>!isNaN(p.y2));
+  const W = 300, H = 190, padL = 38, padR = 14, padT = 16, padB = has2 ? 46 : 34;
+  const allY = pts.map(p=>p.y).concat(has2 ? pts.filter(p=>!isNaN(p.y2)).map(p=>p.y2) : []);
+  let minY = Math.min(...allY), maxY = Math.max(...allY);
   if (minY === maxY) { minY -= 1; maxY += 1; }
   const range = maxY - minY;
   minY -= range * 0.1; maxY += range * 0.1;
@@ -337,8 +339,11 @@ function LineChart({ data }) {
   const xPos = i => padL + (pts.length===1 ? plotW/2 : (i/(pts.length-1))*plotW);
   const yPos = v => padT + plotH - ((v-minY)/(maxY-minY))*plotH;
 
-  const linePath = pts.map((p,i)=>`${i===0?"M":"L"}${xPos(i)},${yPos(p.y)}`).join(" ");
+  const path1 = pts.map((p,i)=>`${i===0?"M":"L"}${xPos(i)},${yPos(p.y)}`).join(" ");
+  const pts2 = pts.filter(p=>!isNaN(p.y2));
+  const path2 = has2 ? pts.map((p,i)=> isNaN(p.y2)?"":`${i===0?"M":"L"}${xPos(i)},${yPos(p.y2)}`).join(" ") : "";
   const gridY = [0,0.25,0.5,0.75,1].map(t => minY + t*(maxY-minY));
+  const c1 = "#4E9AE0", c2 = "#E0654E";
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}}>
@@ -350,15 +355,33 @@ function LineChart({ data }) {
           </text>
         </g>
       ))}
-      <path d={linePath} fill="none" stroke={C.primary} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
-      {pts.map((p,i)=>(
-        <g key={i}>
-          <circle cx={xPos(i)} cy={yPos(p.y)} r="4" fill="white" stroke={C.primary} strokeWidth="2.5"/>
-          <text x={xPos(i)} y={H-padB+16} textAnchor="middle" fontSize="9" fill={C.inkSoft}>{p.x.length>5?p.x.slice(0,5)+"…":p.x}</text>
-          <text x={xPos(i)} y={yPos(p.y)-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={C.primary}>{p.y}</text>
+      {/* 계열 2 (비교) */}
+      {has2 && <path d={path2} fill="none" stroke={c2} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>}
+      {has2 && pts.map((p,i)=> isNaN(p.y2)?null:(
+        <g key={"b"+i}>
+          <circle cx={xPos(i)} cy={yPos(p.y2)} r="4" fill="white" stroke={c2} strokeWidth="2.5"/>
+          <text x={xPos(i)} y={yPos(p.y2)-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={c2}>{p.y2}</text>
         </g>
       ))}
-      <text x={W/2} y={H-4} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600">{(data.xLabel||"가로축")}{data.xUnit?` (${data.xUnit})`:""}</text>
+      {/* 계열 1 */}
+      <path d={path1} fill="none" stroke={has2?c1:C.primary} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+      {pts.map((p,i)=>(
+        <g key={i}>
+          <circle cx={xPos(i)} cy={yPos(p.y)} r="4" fill="white" stroke={has2?c1:C.primary} strokeWidth="2.5"/>
+          <text x={xPos(i)} y={H-padB+16} textAnchor="middle" fontSize="9" fill={C.inkSoft}>{p.x.length>5?p.x.slice(0,5)+"…":p.x}</text>
+          <text x={xPos(i)} y={yPos(p.y)-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={has2?c1:C.primary}>{p.y}</text>
+        </g>
+      ))}
+      {/* 범례 */}
+      {has2 && (
+        <g>
+          <line x1={padL} y1={H-6} x2={padL+16} y2={H-6} stroke={c1} strokeWidth="2.5"/>
+          <text x={padL+20} y={H-3} fontSize="9" fill={C.ink}>{data.yLabel||"값1"}</text>
+          <line x1={padL+90} y1={H-6} x2={padL+106} y2={H-6} stroke={c2} strokeWidth="2.5"/>
+          <text x={padL+110} y={H-3} fontSize="9" fill={C.ink}>{data.yLabel2||"값2"}</text>
+        </g>
+      )}
+      {!has2 && <text x={W/2} y={H-4} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600">{(data.xLabel||"가로축")}{data.xUnit?` (${data.xUnit})`:""}</text>}
       <text x={10} y={H/2} textAnchor="middle" fontSize="9.5" fill={C.inkSoft} fontWeight="600" transform={`rotate(-90 10 ${H/2})`}>{(data.yLabel||"세로축")}{data.yUnit?` (${data.yUnit})`:""}</text>
     </svg>
   );
@@ -405,6 +428,17 @@ function Onboarding({ student, setStudent, onStart }) {
   const floaties = ["🧪","⚗️","🔬","🌡️","🧬","💡","📊","🪐","✨","🔭","⚡","🌟"];
 
   useEffect(()=>{ endRef.current?.scrollIntoView({behavior:"smooth"}); },[msgs,typing,phase]);
+
+  // 이전 완주 횟수 기반 격려 멘트
+  function prevCountMsg(){
+    try {
+      const n = parseInt(window.localStorage.getItem("curi-report-count") || "0", 10);
+      if(n <= 0) return "이번이 나랑 하는 첫 탐구구나! 두근두근 💕";
+      if(n === 1) return "오, 두 번째 탐구를 하러 왔구나! 벌써 탐구 척척박사인데? 👏";
+      if(n < 5) return `우와, 벌써 ${n+1}번째 탐구야! 진짜 꾸준하다, 완전 멋져! 🌟`;
+      return `${n+1}번째 탐구라니… 너 이제 진짜 과학자 다 됐다! 🏆✨`;
+    } catch(e){ return null; }
+  }
 
   // 큐리가 말하는 함수 (타이핑 효과)
   function curiSay(texts, nextPhase){
@@ -461,7 +495,7 @@ function Onboarding({ student, setStudent, onStart }) {
       curiSay(["마지막! 이름이 뭐야?"],"name");
     } else if(phase==="name"){
       setStudent(p=>({...p,name:v}));
-      curiSay([`${v}(이)라고 하는구나! 만나서 반가워 🤗`,"그럼, 우리 같이 멋진 탐구 시작해볼까?"],"done");
+      curiSay([`${v}(이)라고 하는구나! 만나서 반가워 🤗`, prevCountMsg(), "그럼, 우리 같이 멋진 탐구 시작해볼까?"].filter(Boolean),"done");
     } else if(phase==="members"){
       const newList = [...memberList, v];
       setMemberList(newList);
@@ -473,7 +507,7 @@ function Onboarding({ student, setStudent, onStart }) {
   function finishMembers(){
     if(memberList.length===0) return;
     setMsgs(p=>[...p,{who:"me",text:"다 입력했어!"}]);
-    curiSay([`${memberList.join(", ")} — 멋진 팀이네! 🙌`,"그럼, 우리 같이 멋진 탐구 시작해볼까?"],"done");
+    curiSay([`${memberList.join(", ")} — 멋진 팀이네! 🙌`, prevCountMsg(), "그럼, 우리 같이 멋진 탐구 시작해볼까?"].filter(Boolean),"done");
   }
 
   const showInput = ["grade","cls","num","name","members"].includes(phase) && !typing;
@@ -609,6 +643,15 @@ function Onboarding({ student, setStudent, onStart }) {
 
 export default function App() {
   const [started, setStarted] = useState(SAVED?.started ?? false);
+  useEffect(()=>{
+    if(started){
+      try {
+        window.scrollTo(0,0);
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+      } catch(e){}
+    }
+  },[started]);
   const [student, setStudent] = useState(SAVED?.student ?? { mode:"", grade:"", cls:"", num:"", name:"", members:[] });
   const [photos, setPhotos] = useState(SAVED?.photos ?? []); // {id, dataUrl, caption}
   const [simLinks, setSimLinks] = useState(SAVED?.simLinks ?? []); // {id, url, desc}
@@ -617,13 +660,15 @@ export default function App() {
   const [tableData, setTableData] = useState(SAVED?.tableData ?? {
     xLabel: "",
     yLabel: "",
+    yLabel2: "",
     xUnit: "",
     yUnit: "",
+    compare: false,
     qualitative: "",
     rows: [
-      { x: "", y: "" },
-      { x: "", y: "" },
-      { x: "", y: "" }
+      { x: "", y: "", y2: "" },
+      { x: "", y: "", y2: "" },
+      { x: "", y: "", y2: "" }
     ]
   });
   const [view, setView] = useState("report");
@@ -708,6 +753,12 @@ export default function App() {
       toast_("다음 단계로 이동합니다");
       setTimeout(()=>go(idx+1),500);
     } else {
+      // 완주 횟수 +1 (SAVE_KEY와 별개로 영구 보관)
+      try {
+        const key = "curi-report-count";
+        const n = parseInt(window.localStorage.getItem(key) || "0", 10) + 1;
+        window.localStorage.setItem(key, String(n));
+      } catch(e){}
       setShowCelebrate(true);
     }
   }
@@ -735,8 +786,10 @@ export default function App() {
     if(id==="r"){
       const tableText = tableData.rows
         .filter(r=>r.x && r.y!=="")
-        .map(r=>`${r.x}: ${r.y}`)
-        .join(", ");
+        .map(r=> tableData.compare && r.y2!==undefined && r.y2!==""
+          ? `${r.x}: ${tableData.yLabel||"값1"} ${r.y}, ${tableData.yLabel2||"값2"} ${r.y2}`
+          : `${r.x}: ${r.y}`)
+        .join(" / ");
       text = `${tableData.qualitative.trim()?`[관찰 기록] ${tableData.qualitative.trim()}\n`:""}${tableText?`[측정 데이터] ${tableData.xLabel||"가로"} 기준 ${tableData.yLabel||"세로"} — ${tableText}\n`:""}[결과 해석] ${inputs.r.trim()}`;
     }
     const newAtt = attempts[id]+1;
@@ -909,8 +962,8 @@ export default function App() {
       const log = f.map((fb,i)=>`
         <tr>
           <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11px;text-align:center;white-space:nowrap;color:#6D5BD0;font-weight:700;">${i+1}차</td>
-          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11.5px;line-height:1.55;color:#333;">${esc((inp[i]||"").replace(/\s+/g," ").slice(0,130))}${(inp[i]||"").length>130?"…":""}</td>
-          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11.5px;line-height:1.55;color:#5847B8;">${esc((fb.question||fb.good||"").slice(0,130))}</td>
+          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11.5px;line-height:1.55;color:#333;">${esc((inp[i]||"").replace(/\s+/g," ").slice(0,400))}${(inp[i]||"").length>400?"…":""}</td>
+          <td style="border:1px solid #e5e5ee;padding:6px 8px;font-size:11.5px;line-height:1.55;color:#5847B8;">${esc((fb.question||fb.good||"").slice(0,400))}</td>
         </tr>`).join("");
       return `
       <div style="margin-bottom:14px;page-break-inside:avoid;">
@@ -1039,13 +1092,14 @@ export default function App() {
       return "<i>(작성 없음)</i>";
     };
 
-    const tableRows = tableData.rows.filter(r=>r.x && r.y!=="").map(r=>`<tr><td>${esc(r.x)}</td><td>${esc(r.y)}</td></tr>`).join("");
+    const tableRows = tableData.rows.filter(r=>r.x && r.y!=="").map(r=>`<tr><td>${esc(r.x)}</td><td>${esc(r.y)}</td>${tableData.compare?`<td>${esc(r.y2||"")}</td>`:""}</tr>`).join("");
     const xh = esc(tableData.xLabel||"가로축") + (tableData.xUnit?` (${esc(tableData.xUnit)})`:"");
-    const yh = esc(tableData.yLabel||"세로축") + (tableData.yUnit?` (${esc(tableData.yUnit)})`:"");
+    const yh = (tableData.compare?esc(tableData.yLabel||"값1"):esc(tableData.yLabel||"세로축")) + (tableData.yUnit?` (${esc(tableData.yUnit)})`:"");
+    const yh2 = tableData.compare ? esc(tableData.yLabel2||"값2") + (tableData.yUnit?` (${esc(tableData.yUnit)})`:"") : "";
     const resultBlock = `
       ${tableData.qualitative?`<div style="margin-bottom:8px;"><b>관찰 기록:</b> ${esc(tableData.qualitative)}</div>`:""}
       ${tableRows ? `<table style="border-collapse:collapse;margin:8px 0;font-size:13px;">
-        <tr><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${xh}</th><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${yh}</th></tr>
+        <tr><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${xh}</th><th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${yh}</th>${tableData.compare?`<th style="border:1px solid #ccc;padding:5px 12px;background:#f3f1fb;">${yh2}</th>`:""}</tr>
         ${tableRows.replace(/<td>/g,'<td style="border:1px solid #ccc;padding:5px 12px;text-align:center;">')}
       </table>` : ""}
       <div><b>결과 해석:</b> ${esc(inputs.r)||"<i>(작성 없음)</i>"}</div>`;
@@ -1121,7 +1175,7 @@ export default function App() {
 
   // ── 시작 화면 (학생 정보 입력) ──
   if (!started) {
-    return <Onboarding student={student} setStudent={setStudent} onStart={()=>setStarted(true)} />;
+    return <Onboarding student={student} setStudent={setStudent} onStart={()=>{ try{window.scrollTo(0,0);}catch(e){} setStarted(true); }} />;
   }
 
   return (
@@ -1350,24 +1404,49 @@ export default function App() {
 
                 {/* 표 */}
                 <div style={{background:C.surface,border:`1.5px solid ${C.line}`,borderRadius:14,padding:12,marginBottom:10}}>
+                  {/* 비교 모드 토글 */}
+                  <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+                    <button onClick={()=>setTableData(p=>({...p,compare:!p.compare}))}
+                      style={{fontSize:11.5,fontWeight:700,padding:"5px 11px",borderRadius:99,border:`1.5px solid ${tableData.compare?"#E0654E":C.line}`,background:tableData.compare?"#FDEEEA":C.surface,color:tableData.compare?"#E0654E":C.inkSoft,cursor:"pointer"}}>
+                      {tableData.compare?"✕ 비교 끄기":"＋ 두 개 비교하기"}
+                    </button>
+                  </div>
+
+                  {tableData.compare && (
+                    <div style={{display:"flex",gap:8,marginBottom:8}}>
+                      <div style={{flex:1}}/>
+                      <input value={tableData.yLabel} onChange={e=>setTableData(p=>({...p,yLabel:e.target.value}))} placeholder="첫째 이름 (예: 1970년대)"
+                        style={{flex:1,boxSizing:"border-box",border:`1.5px solid #4E9AE0`,borderRadius:8,padding:"6px 9px",fontSize:12,fontFamily:"inherit",outline:"none",color:"#4E9AE0",fontWeight:700}}/>
+                      <input value={tableData.yLabel2} onChange={e=>setTableData(p=>({...p,yLabel2:e.target.value}))} placeholder="둘째 이름 (예: 2020년대)"
+                        style={{flex:1,boxSizing:"border-box",border:`1.5px solid #E0654E`,borderRadius:8,padding:"6px 9px",fontSize:12,fontFamily:"inherit",outline:"none",color:"#E0654E",fontWeight:700}}/>
+                      <div style={{width:28}}/>
+                    </div>
+                  )}
+
                   <div style={{display:"flex",gap:8,marginBottom:8,fontSize:12,fontWeight:700,color:C.inkSoft,padding:"0 4px"}}>
                     <div style={{flex:1}}>{tableData.xLabel||"가로축"}{tableData.xUnit?` (${tableData.xUnit})`:""}</div>
-                    <div style={{flex:1}}>{tableData.yLabel||"세로축"}{tableData.yUnit?` (${tableData.yUnit})`:""}</div>
+                    <div style={{flex:1}}>{tableData.compare?(tableData.yLabel||"값1"):(tableData.yLabel||"세로축")}{tableData.yUnit?` (${tableData.yUnit})`:""}</div>
+                    {tableData.compare && <div style={{flex:1}}>{tableData.yLabel2||"값2"}{tableData.yUnit?` (${tableData.yUnit})`:""}</div>}
                     <div style={{width:28}}/>
                   </div>
                   {tableData.rows.map((row,ri)=>(
                     <div key={ri} style={{display:"flex",gap:8,marginBottom:7,alignItems:"center"}}>
                       <input value={row.x} placeholder=""
                         onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],x:e.target.value};setTableData(p=>({...p,rows}));}}
-                        style={{flex:1,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                        style={{flex:1,minWidth:0,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
                       <input value={row.y} placeholder="" inputMode="decimal"
                         onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],y:e.target.value};setTableData(p=>({...p,rows}));}}
-                        style={{flex:1,border:`1.5px solid ${C.line}`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                        style={{flex:1,minWidth:0,border:`1.5px solid ${tableData.compare?"#4E9AE0":C.line}`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                      {tableData.compare && (
+                        <input value={row.y2||""} placeholder="" inputMode="decimal"
+                          onChange={e=>{const rows=[...tableData.rows];rows[ri]={...rows[ri],y2:e.target.value};setTableData(p=>({...p,rows}));}}
+                          style={{flex:1,minWidth:0,border:`1.5px solid #E0654E`,borderRadius:9,padding:"8px 10px",fontSize:14.5,fontFamily:"inherit",outline:"none",color:C.ink}}/>
+                      )}
                       <button onClick={()=>{ if(tableData.rows.length>1){const rows=tableData.rows.filter((_,i)=>i!==ri);setTableData(p=>({...p,rows}));} }}
                         style={{width:28,height:28,borderRadius:8,border:"none",background:C.lineSoft,color:C.inkSoft,fontSize:16.5,cursor:"pointer",flexShrink:0}}>−</button>
                     </div>
                   ))}
-                  <button onClick={()=>setTableData(p=>({...p,rows:[...p.rows,{x:"",y:""}]}))}
+                  <button onClick={()=>setTableData(p=>({...p,rows:[...p.rows,{x:"",y:"",y2:""}]}))}
                     style={{width:"100%",marginTop:4,padding:9,border:`1.5px dashed ${C.primary}50`,borderRadius:9,background:C.primarySoft,color:C.primary,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>
                     + 행 추가
                   </button>
